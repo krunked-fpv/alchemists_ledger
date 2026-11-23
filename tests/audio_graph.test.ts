@@ -6,6 +6,7 @@ import {
   synthesizeKarplusStrongBuffer,
   type AudioPhysicsBusEvent,
   type BrassWeightDenom,
+  type CelebrationFanfareKind,
   type MarketRegime,
   type PolyrhythmRatio,
   type PotionVessel,
@@ -706,6 +707,17 @@ describe('ProceduralAsmrAudioEngine', () => {
     globalAudioBus.emit({ type: 'pipette_drop', viscosity: Number.NaN, pitchOffset: Number.NaN });
     globalAudioBus.emit({ type: 'cauldron_simmer', temperatureC: Number.NaN, viscosity: -10 });
     globalAudioBus.emit({ type: 'mortar_grind', hardness: Number.POSITIVE_INFINITY, speed: -3 });
+    globalAudioBus.emit({
+      type: 'station_transition',
+      fromIndex: Number.NaN,
+      toIndex: Number.POSITIVE_INFINITY,
+      toCellar: false,
+    });
+    globalAudioBus.emit({
+      type: 'celebration_fanfare',
+      kind: 'seal_masterwork',
+      intensity: Number.NaN,
+    });
     expect(globalEngine.getActiveNodeCount()).toBeGreaterThan(baseline);
 
     mockCtx.flushTransientEnded();
@@ -713,5 +725,173 @@ describe('ProceduralAsmrAudioEngine', () => {
 
     globalEngine.dispose();
     expect(globalEngine.getActiveNodeCount()).toBe(0);
+  });
+
+  it('synthesizes directional station_transition chains for standard and cellar moves', async () => {
+    const { bus, mockCtx, engine } = createHarness();
+    // Safe before unlock
+    expect(() =>
+      bus.emit({ type: 'station_transition', fromIndex: 0, toIndex: 2, toCellar: false }),
+    ).not.toThrow();
+
+    await engine.unlock();
+    const baseline = engine.getActiveNodeCount();
+
+    // Standard left-to-right workbench slide (0 -> 3)
+    let before = mockCtx.snapshotCounts();
+    bus.emit({ type: 'station_transition', fromIndex: 0, toIndex: 3, toCellar: false });
+    const stdPanners = mockCtx.stereoPanners.slice(before.stereoPanners);
+    expect(stdPanners).toHaveLength(1);
+    const lrStart = stdPanners[0].pan.calls.find((c) => c.method === 'setValueAtTime')!;
+    const lrEnd = stdPanners[0].pan.calls.find((c) => c.method === 'linearRampToValueAtTime')!;
+    expect(lrStart.value).toBeLessThan(0);
+    expect(lrEnd.value).toBeGreaterThan(0);
+    expect(mockCtx.biquadFilters.slice(before.biquadFilters).some((f) => f.type === 'bandpass')).toBe(
+      true,
+    );
+    const stdAddedOscs = mockCtx.oscillators.length - before.oscillators;
+    expect(stdAddedOscs).toBeGreaterThanOrEqual(2);
+
+    // Standard right-to-left workbench slide (3 -> 1)
+    before = mockCtx.snapshotCounts();
+    bus.emit({ type: 'station_transition', fromIndex: 3, toIndex: 1, toCellar: false });
+    const rlPanner = mockCtx.stereoPanners.slice(before.stereoPanners)[0];
+    const rlStart = rlPanner.pan.calls.find((c) => c.method === 'setValueAtTime')!;
+    const rlEnd = rlPanner.pan.calls.find((c) => c.method === 'linearRampToValueAtTime')!;
+    expect(rlStart.value).toBeGreaterThan(0);
+    expect(rlEnd.value).toBeLessThan(0);
+
+    // Cellar descent (toCellar: true) adds wrought-iron latch clunk + vaulted stone sub-resonance
+    before = mockCtx.snapshotCounts();
+    bus.emit({ type: 'station_transition', fromIndex: 1, toIndex: 4, toCellar: true });
+    const cellarOscs = mockCtx.oscillators.slice(before.oscillators);
+    const cellarFilters = mockCtx.biquadFilters.slice(before.biquadFilters);
+    const cellarSrcs = mockCtx.bufferSources.slice(before.bufferSources);
+    expect(cellarOscs.length).toBeGreaterThan(stdAddedOscs);
+    expect(cellarOscs.some((o) => o.frequency.calls.some((c) => c.value < 100))).toBe(true);
+    expect(cellarFilters.some((f) => f.type === 'lowpass' && f.frequency.value < 200)).toBe(true);
+    expect(cellarSrcs.length).toBeGreaterThanOrEqual(4);
+
+    expect(engine.getActiveNodeCount()).toBeGreaterThan(baseline);
+    mockCtx.flushTransientEnded();
+    expect(engine.getActiveNodeCount()).toBe(baseline);
+
+    engine.dispose();
+  });
+
+  it('synthesizes all 5 celebration_fanfare kinds and cleans up nodes completely', async () => {
+    const { bus, mockCtx, engine } = createHarness();
+    const fanfareKinds: CelebrationFanfareKind[] = [
+      'seal_masterwork',
+      'bargain_struck',
+      'commission_fulfilled',
+      'dawn_chime',
+      'cellar_harvest',
+    ];
+
+    // Safe no-op before unlock
+    for (const kind of fanfareKinds) {
+      expect(() => bus.emit({ type: 'celebration_fanfare', kind, intensity: 0.9 })).not.toThrow();
+    }
+
+    await engine.unlock();
+    const baseline = engine.getActiveNodeCount();
+
+    // 1. seal_masterwork: 4-mode prism harmonic chime + Karplus-Strong fifth interval
+    let before = mockCtx.snapshotCounts();
+    bus.emit({ type: 'celebration_fanfare', kind: 'seal_masterwork', intensity: 1.0 });
+    const prismFilters = mockCtx.biquadFilters
+      .slice(before.biquadFilters)
+      .filter((f) => f.type === 'bandpass');
+    expect(prismFilters).toHaveLength(4);
+    expect(prismFilters[0].frequency.value).toBeCloseTo(1320, 1);
+    const fifthBuffers = mockCtx.bufferSources
+      .slice(before.bufferSources)
+      .filter((s) => s.buffer && s.buffer !== mockCtx.buffers[0] && s.buffer !== mockCtx.buffers[1]);
+    expect(fifthBuffers).toHaveLength(2);
+    for (const s of fifthBuffers) {
+      expect(s.buffer!.length).toBeGreaterThan(mockCtx.sampleRate);
+      const ch = s.buffer!.getChannelData(0);
+      expect(ch.every((v) => Number.isFinite(v) && v >= -1 && v <= 1)).toBe(true);
+    }
+
+    // 2. bargain_struck: cascading stereo brass/gold Crown coin clinks + settled bell chime
+    before = mockCtx.snapshotCounts();
+    bus.emit({ type: 'celebration_fanfare', kind: 'bargain_struck', intensity: 1.1 });
+    const coinPanners = mockCtx.stereoPanners.slice(before.stereoPanners);
+    expect(coinPanners.length).toBeGreaterThanOrEqual(5);
+    expect(coinPanners[0].pan.value).toBeLessThan(0);
+    expect(coinPanners[coinPanners.length - 1].pan.value).toBeGreaterThan(0);
+    const bargainOscs = mockCtx.oscillators.slice(before.oscillators);
+    expect(bargainOscs.some((o) => Math.abs(o.frequency.value - 880) < 1)).toBe(true);
+
+    // 3. commission_fulfilled: 4-voice Karplus-Strong lute chord strum + glass-harmonica shimmer swell
+    before = mockCtx.snapshotCounts();
+    bus.emit({ type: 'celebration_fanfare', kind: 'commission_fulfilled', intensity: 1.0 });
+    const strumBuffers = mockCtx.bufferSources
+      .slice(before.bufferSources)
+      .filter((s) => s.buffer && s.buffer !== mockCtx.buffers[0] && s.buffer !== mockCtx.buffers[1]);
+    expect(strumBuffers).toHaveLength(4);
+    for (const s of strumBuffers) {
+      expect(s.buffer!.length).toBeGreaterThan(mockCtx.sampleRate);
+      const ch = s.buffer!.getChannelData(0);
+      expect(ch.every((v) => Number.isFinite(v) && v >= -1 && v <= 1)).toBe(true);
+    }
+    const harmonicaOscs = mockCtx.oscillators.slice(before.oscillators);
+    expect(harmonicaOscs.length).toBeGreaterThanOrEqual(3);
+
+    // 4. dawn_chime: warm bronze apothecary morning bell + soft airy overtone
+    before = mockCtx.snapshotCounts();
+    bus.emit({ type: 'celebration_fanfare', kind: 'dawn_chime', intensity: 0.95 });
+    const dawnOscs = mockCtx.oscillators.slice(before.oscillators);
+    expect(dawnOscs.some((o) => Math.abs(o.frequency.value - 392) < 1)).toBe(true);
+    expect(
+      mockCtx.biquadFilters
+        .slice(before.biquadFilters)
+        .some((f) => f.type === 'bandpass' && f.Q.value >= 6),
+    ).toBe(true);
+
+    // 5. cellar_harvest: delicate 3-note borosilicate condenser harmonic triad
+    before = mockCtx.snapshotCounts();
+    bus.emit({ type: 'celebration_fanfare', kind: 'cellar_harvest', intensity: 0.85 });
+    const cellarPanners = mockCtx.stereoPanners.slice(before.stereoPanners);
+    expect(cellarPanners).toHaveLength(3);
+    expect(cellarPanners[0].pan.value).toBeLessThan(0);
+    expect(cellarPanners[1].pan.value).toBe(0);
+    expect(cellarPanners[2].pan.value).toBeGreaterThan(0);
+    const cellarModes = mockCtx.biquadFilters
+      .slice(before.biquadFilters)
+      .filter((f) => f.type === 'bandpass');
+    expect(cellarModes).toHaveLength(6);
+
+    expect(engine.getActiveNodeCount()).toBeGreaterThan(baseline);
+    mockCtx.flushTransientEnded();
+    expect(engine.getActiveNodeCount()).toBe(baseline);
+
+    // Every transient node created across fanfares was cleanly disconnected
+    expect(mockCtx.oscillators.every((o) => o.disconnected)).toBe(true);
+    expect(mockCtx.stereoPanners.every((p) => p.disconnected)).toBe(true);
+    expect(mockCtx.biquadFilters.slice(1).every((f) => f.disconnected)).toBe(true);
+
+    engine.dispose();
+    expect(engine.getActiveNodeCount()).toBe(0);
+  });
+
+  it('cleans up station_transition and celebration_fanfare nodes via fallback timer without onended', async () => {
+    vi.useFakeTimers();
+    const { bus, engine } = createHarness();
+    await engine.unlock();
+    const baseline = engine.getActiveNodeCount();
+
+    bus.emit({ type: 'station_transition', fromIndex: 0, toIndex: 4, toCellar: true });
+    bus.emit({ type: 'celebration_fanfare', kind: 'commission_fulfilled', intensity: 1.0 });
+    bus.emit({ type: 'celebration_fanfare', kind: 'bargain_struck', intensity: 0.8 });
+    expect(engine.getActiveNodeCount()).toBeGreaterThan(baseline);
+
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(engine.getActiveNodeCount()).toBe(baseline);
+
+    engine.dispose();
+    expect(engine.getActiveNodeCount()).toBe(0);
   });
 });
