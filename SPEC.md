@@ -236,8 +236,8 @@ export interface CauldronLayerVisual {
 ```
 
 ### Required GLSL Uniforms
-- `shaders/cauldron_core.glsl`: Declares and uses `u_time`, `u_dt`, `u_resolution`, `u_pointerPos`, `u_pointerVel`, `u_ladleOmega`, `u_viscosity`, `u_temperature`, `u_marbling`, `u_layerCrispness`, `u_micaAmount`, `u_rippleOrigin`, `u_ripplePhase`, `u_layerColors[4]`, `u_layerDensities[4]`, `u_prevState` (ping-pong sampler) with vorticity confinement + Jacobi pressure projection + NaN/Inf safe clamping.
-- `shaders/glass_caustics.glsl`: Declares `u_time`, `u_resolution`, `u_vesselType` (`0=prism, 1=teardrop, 2=crescent, 3=carafe`), `u_pourProgress`, `u_waxStamped`, `u_waxColor`, `u_layerColors[4]`, `u_layerDensities[4]`.
+- `shaders/cauldron_core.glsl`: Declares and uses `u_time`, `u_dt`, `u_resolution`, `u_pointerPos`, `u_pointerVel`, `u_ladleOmega`, `u_viscosity`, `u_temperature`, `u_marbling`, `u_layerCrispness`, `u_micaAmount`, `u_rippleOrigin`, `u_ripplePhase`, `u_layerColors[4]`, `u_layerDensities[4]`, `u_prevState` (ping-pong sampler), plus multi-pass orchestration uniforms `u_pass`, `u_fboEncoded`, `u_hasWarpTex`, `u_warpTex`, `u_simTex`, and `u_phRgb` with vorticity confinement + Jacobi pressure projection + NaN/Inf safe clamping.
+- `shaders/glass_caustics.glsl`: Declares `u_time`, `u_resolution`, `u_vesselType` (`0=prism, 1=teardrop, 2=crescent, 3=carafe`), `u_pourProgress`, `u_waxStamped`, `u_waxColor`, `u_layerColors[4]`, `u_layerDensities[4]`, plus seal/fluid state uniforms `u_corked`, `u_waxPoured`, `u_layerCrispness`, and `u_marbling`.
 - `shaders/stained_glass_weather.glsl`: Declares `u_time`, `u_resolution`, `u_regimeIndex` (`0=calm, 1=dragon_siege, 2=bumper_harvest, 3=glacial_snap, 4=starfall_conclave`), `u_sunAngle`.
 
 ### `src/render/index.ts` & `src/render/fluid_cpu_ref.ts` Exported Surface
@@ -468,7 +468,14 @@ export interface CookieVaultDigestV1 {
     cel: Array<[number, number, number]>; // up to 6 cellar nodes [apparatusIdx, reagentIdx, ratioIdx]
     qnt: number[];       // packed quintessence/salt counts
     cmp: number;         // completed commission bitmask
+    lbl?: string;        // optional trimmed household label
+    potL?: Array<Array<[number, number, number]>>; // optional layer digests [reagentIdx, prepIdx, volPct]
+    celE?: Array<[number, number, number]>;        // optional pipe edges [fromIdx, toIdx, ratioIdx]
+    celP?: Array<[number, number]>;                // optional quantized node positions
+    cmpIds?: string[];                             // optional commission IDs
   }>;
+  am?: 0 | 1;            // optional audioMuted flag
+  av?: number;           // optional quantized audioVolume (0..100)
 }
 
 export interface FestivalCommissionSpec {
