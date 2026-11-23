@@ -128,6 +128,21 @@ export interface FestivalCommissionSpec {
   rewardCrowns: number;
 }
 
+export type CommissionRegime =
+  | 'calm'
+  | 'dragon_siege'
+  | 'bumper_harvest'
+  | 'glacial_snap'
+  | 'starfall_conclave';
+
+export interface ProceduralCommissionOptions {
+  regime: CommissionRegime;
+  day: number;
+  completedIds: readonly string[];
+  seed: string;
+  count?: number;
+}
+
 export const REAGENT_CATALOG: Record<ReagentId, ReagentSpec> = {
   amber_honey_resin: {
     id: 'amber_honey_resin',
@@ -356,6 +371,42 @@ const VESSEL_MULTIPLIERS: Record<PotionVessel, number> = {
   carafe: 1.3,
 };
 
+const REAGENT_STRATA_NOUNS: Record<ReagentId, { primary: string; secondary: string }> = {
+  amber_honey_resin: { primary: 'Amber', secondary: 'Honey-Resin' },
+  cinnabar_sulfur_ash: { primary: 'Cinnabar', secondary: 'Sulfur-Ash' },
+  bismuth_vitriol_salt: { primary: 'Bismuth', secondary: 'Vitriol' },
+  glacial_alum_shard: { primary: 'Glacial Alum', secondary: 'Alum-Shard' },
+  chalk_pearl_lime: { primary: 'Pearl-Lime', secondary: 'Chalk-Lime' },
+  verdigris_moss_sap: { primary: 'Verdigris', secondary: 'Moss-Sap' },
+  saffron_hearth_pollen: { primary: 'Saffron', secondary: 'Hearth-Pollen' },
+  cobalt_lotus_nectar: { primary: 'Cobalt Lotus', secondary: 'Lotus-Nectar' },
+  moonveil_lichen_dew: { primary: 'Moonveil', secondary: 'Lichen-Dew' },
+  rose_madder_distillate: { primary: 'Rose Madder', secondary: 'Madder-Dew' },
+  auric_mica_suspension: { primary: 'Auric Mica', secondary: 'Gold-Mica' },
+  starlight_aether_oil: { primary: 'Starlight', secondary: 'Aether-Oil' },
+};
+
+const WAX_COLOR_FLAIRS: Record<WaxSealSpec['color'], string> = {
+  crimson: 'Crimson',
+  verdigris: 'Verdigris',
+  gold: 'Gilt',
+  indigo: 'Indigo',
+};
+
+const CREST_FLAIRS: Record<WaxSealSpec['crest'], string> = {
+  phoenix: 'Phoenix',
+  alembic: 'Alembic',
+  crescent: 'Lunar',
+  scales: 'Scales',
+};
+
+const VESSEL_FLAIRS: Record<PotionVessel, string> = {
+  prism: 'Prism',
+  teardrop: 'Teardrop',
+  crescent: 'Crescent',
+  carafe: 'Carafe',
+};
+
 const PH_ANCHOR_STOPS: ReadonlyArray<{ ph: number; rgb: [number, number, number] }> = [
   { ph: 1.5, rgb: [0.88, 0.12, 0.22] },   // crimson acid
   { ph: 3.5, rgb: [0.78, 0.18, 0.44] },   // rose-magenta
@@ -417,6 +468,136 @@ function cloneLayer(layer: DensityLayer): DensityLayer {
     micaIntensity: layer.micaIntensity,
     interfaceSharpness: layer.interfaceSharpness,
   };
+}
+
+function selectCraftStructureDescriptor(
+  state: CauldronFluidState,
+  vessel: PotionVessel,
+  meanMica: number
+): string {
+  if (state.marblingIndex >= 0.35) {
+    return 'Suminagashi';
+  }
+  if (state.marblingIndex >= 0.12 || state.meanViscosity >= 8.0) {
+    return 'Velvet';
+  }
+  if (meanMica >= 0.55) {
+    return 'Opalescent';
+  }
+  if (vessel === 'prism' && state.layerCrispness >= 0.72 && state.layers.length >= 2) {
+    return 'Prismatic';
+  }
+  const hasCrystal = state.layers.some(
+    (layer) => REAGENT_CATALOG[layer.reagentId].category === 'crystal'
+  );
+  if (hasCrystal && state.layerCrispness >= 0.7) {
+    return 'Crystalline';
+  }
+  if (meanMica >= 0.38) {
+    return 'Opalescent';
+  }
+  if (state.layers.length >= 3 && state.layerCrispness >= 0.7) {
+    return 'Stratified';
+  }
+  return 'Laminar';
+}
+
+function selectThermalPhAccent(
+  state: CauldronFluidState,
+  peakTempC: number,
+  meanMica: number
+): string {
+  const thermal =
+    peakTempC >= 54 || state.temperatureC >= 50
+      ? 'Sun-Tempered'
+      : state.temperatureC <= 20
+        ? 'Rime-Cooled'
+        : '';
+
+  const phOrMica =
+    state.ph <= 5.5
+      ? 'Vitriolic'
+      : state.ph >= 8.0
+        ? 'Alkali-Balanced'
+        : meanMica >= 0.48
+          ? 'Mica-Gilt'
+          : '';
+
+  if (thermal && phOrMica) {
+    return `${thermal} ${phOrMica}`;
+  }
+  if (thermal || phOrMica) {
+    return thermal || phOrMica;
+  }
+  if (meanMica >= 0.45) {
+    return 'Mica-Gilt';
+  }
+  if (state.ph < 6.5) {
+    return 'Vitriolic';
+  }
+  if (state.ph > 7.4) {
+    return 'Alkali-Balanced';
+  }
+  return peakTempC >= 28 ? 'Sun-Tempered' : 'Rime-Cooled';
+}
+
+function formatStrataReagentNouns(layers: readonly DensityLayer[]): string {
+  const ranked = [...layers].sort((a, b) => {
+    if (Math.abs(b.volumeMl - a.volumeMl) > 1e-6) {
+      return b.volumeMl - a.volumeMl;
+    }
+    return b.specificGravity - a.specificGravity;
+  });
+
+  if (ranked.length === 1) {
+    return REAGENT_STRATA_NOUNS[ranked[0].reagentId].primary;
+  }
+
+  const headNouns = ranked
+    .slice(0, Math.min(3, ranked.length - 1))
+    .map((layer) => REAGENT_STRATA_NOUNS[layer.reagentId].primary);
+  const secondaryNoun = REAGENT_STRATA_NOUNS[ranked[ranked.length - 1].reagentId].secondary;
+  return `${headNouns.join(', ')} & ${secondaryNoun}`;
+}
+
+function formatCrestVesselFlair(vessel: PotionVessel, seal: WaxSealSpec): string {
+  const waxColor = WAX_COLOR_FLAIRS[seal.color];
+  const vesselFlair = VESSEL_FLAIRS[vessel];
+  if (!seal.stamped) {
+    return `(Unsealed ${waxColor} ${vesselFlair})`;
+  }
+  const crestFlair = CREST_FLAIRS[seal.crest];
+  return `(${waxColor} ${crestFlair} ${vesselFlair})`;
+}
+
+/**
+ * Builds a multi-dimensional evocative apothecary potion name combining craft structure,
+ * thermal/pH/mica accent, ranked primary+secondary strata reagent nouns, effect title,
+ * and wax-crest/vessel flair.
+ */
+function buildPotionName(
+  state: CauldronFluidState,
+  peakTempC: number,
+  vessel: PotionVessel,
+  seal: WaxSealSpec
+): string {
+  const effectTitle = EFFECT_TITLES[state.dominantEffect];
+  if (state.layers.length === 0) {
+    return `Empty ${effectTitle} Vessel`;
+  }
+
+  let weightedMica = 0;
+  for (const layer of state.layers) {
+    weightedMica += layer.micaIntensity * layer.volumeMl;
+  }
+  const meanMica = state.totalVolumeMl > 0 ? weightedMica / state.totalVolumeMl : 0;
+
+  const structure = selectCraftStructureDescriptor(state, vessel, meanMica);
+  const accent = selectThermalPhAccent(state, peakTempC, meanMica);
+  const strataNouns = formatStrataReagentNouns(state.layers);
+  const flair = formatCrestVesselFlair(vessel, seal);
+
+  return `${structure} ${accent} ${strataNouns} ${effectTitle} ${flair}`;
 }
 
 /**
@@ -716,9 +897,7 @@ export class CauldronSimulator {
     let baseValueCrowns = 1;
 
     if (state.layers.length > 0) {
-      const topSpec = REAGENT_CATALOG[state.layers[state.layers.length - 1].reagentId];
-      const prefix = state.marblingIndex >= 0.35 ? 'Marbled' : state.layerCrispness >= 0.8 ? 'Layered' : 'Brewed';
-      name = `${prefix} ${topSpec.name.split(' ')[0]} ${effectTitle}`;
+      name = buildPotionName(state, this.peakTempC, vessel, seal);
 
       let reagentValue = 0;
       for (const layer of state.layers) {
@@ -891,4 +1070,589 @@ export class CauldronSimulator {
     }
     return bestTag;
   }
+}
+
+const ALL_COMMISSION_REGIMES: readonly CommissionRegime[] = [
+  'calm',
+  'dragon_siege',
+  'bumper_harvest',
+  'glacial_snap',
+  'starfall_conclave',
+];
+
+const TIER_ORDER: readonly FestivalCommissionSpec['tier'][] = [
+  'apprentice',
+  'journeyman',
+  'grandmaster',
+];
+
+interface CommissionFamilySeed {
+  effect: PotionEffectTag;
+  slug: string;
+  alignedRegimes: readonly CommissionRegime[];
+  phCenter: number;
+  reagentCue: string;
+  titles: readonly [string, string, string];
+}
+
+interface ProceduralCommissionEntry {
+  spec: FestivalCommissionSpec;
+  slug: string;
+  alignedRegimes: readonly CommissionRegime[];
+}
+
+const COMMISSION_FAMILIES: readonly CommissionFamilySeed[] = [
+  // fire_ward (6 families -> 18 trials)
+  {
+    effect: 'fire_ward',
+    slug: 'cinnabar-bastion',
+    alignedRegimes: ['dragon_siege', 'calm'],
+    phCenter: 3.25,
+    reagentCue: 'cinnabar ash and bismuth vitriol',
+    titles: ['Squire Cinnabar Ward', 'Bastion-Gate Fire Ward', 'Imperial Drakefire Ward'],
+  },
+  {
+    effect: 'fire_ward',
+    slug: 'saffron-bulwark',
+    alignedRegimes: ['dragon_siege', 'glacial_snap'],
+    phCenter: 5.35,
+    reagentCue: 'cinnabar sulfur and saffron pollen',
+    titles: ['Kindled Saffron Screen', 'Hearth-Wrought Flame Bulwark', 'Solar Pyre Ward'],
+  },
+  {
+    effect: 'fire_ward',
+    slug: 'chalk-buffered-aegis',
+    alignedRegimes: ['dragon_siege', 'calm'],
+    phCenter: 7.3,
+    reagentCue: 'lime-buffered cinnabar and hearth pollen',
+    titles: ['Lime-Tempered Hearth Shield', 'Garrison Cinder Aegis', 'Citadel Crucible Ward'],
+  },
+  {
+    effect: 'fire_ward',
+    slug: 'vitriol-mantle',
+    alignedRegimes: ['dragon_siege'],
+    phCenter: 3.0,
+    reagentCue: 'vitriol salt and red sulfur ash',
+    titles: ['Vitriol Spark Mantle', 'Red-Ash Rampart Ward', 'Archmage Salamander Mantle'],
+  },
+  {
+    effect: 'fire_ward',
+    slug: 'mica-ember-screen',
+    alignedRegimes: ['dragon_siege', 'starfall_conclave'],
+    phCenter: 5.8,
+    reagentCue: 'cinnabar, saffron, and suspended mica',
+    titles: ['Gilt-Fleck Ember Screen', 'Prismatic Ember Ward', 'Astral Forge-Guard Aegis'],
+  },
+  {
+    effect: 'fire_ward',
+    slug: 'lime-quarry-ward',
+    alignedRegimes: ['dragon_siege', 'bumper_harvest'],
+    phCenter: 8.05,
+    reagentCue: 'cinnabar, saffron, and pearl lime',
+    titles: ['Quarry-Lime Smoke Ward', 'Kiln-Master Flame Shield', 'Sovereign Siege Ward'],
+  },
+
+  // burn_salve (6 families -> 18 trials)
+  {
+    effect: 'burn_salve',
+    slug: 'alum-moss-poultice',
+    alignedRegimes: ['dragon_siege', 'bumper_harvest'],
+    phCenter: 8.0,
+    reagentCue: 'glacial alum and verdigris moss sap',
+    titles: ['Moss-Coolant Poultice', 'Warden Alum-Moss Salve', 'Grand Apothecary Burn Balm'],
+  },
+  {
+    effect: 'burn_salve',
+    slug: 'glacial-soothe-balm',
+    alignedRegimes: ['dragon_siege', 'glacial_snap'],
+    phCenter: 9.0,
+    reagentCue: 'glacial alum shard with pearl lime',
+    titles: ['Rime-Shard Relief Balm', 'Alkali Frost-Mend Salve', 'Glacier-Heart Burn Unguent'],
+  },
+  {
+    effect: 'burn_salve',
+    slug: 'verdigris-lichen-cream',
+    alignedRegimes: ['bumper_harvest', 'calm'],
+    phCenter: 5.6,
+    reagentCue: 'verdigris moss and moonveil lichen',
+    titles: ['Verdigris Canopy Cream', 'Herbalist Soothe-Lichen Salve', 'Emerald Dew Burn Restore'],
+  },
+  {
+    effect: 'burn_salve',
+    slug: 'quenched-cinnabar-unguent',
+    alignedRegimes: ['dragon_siege'],
+    phCenter: 4.4,
+    reagentCue: 'quenched cinnabar, moss sap, and moonveil',
+    titles: ['Quenched Ash Ointment', 'Scorched-Banner Burn Salve', 'Phoenix-Ash Healing Unguent'],
+  },
+  {
+    effect: 'burn_salve',
+    slug: 'moonveil-frost-salve',
+    alignedRegimes: ['glacial_snap', 'starfall_conclave'],
+    phCenter: 7.7,
+    reagentCue: 'glacial alum, moonveil dew, and moss sap',
+    titles: ['Moonveil Cool Draught-Salve', 'Twilight Rime Burn Salve', 'Aurora Frost-Silk Unguent'],
+  },
+  {
+    effect: 'burn_salve',
+    slug: 'drake-ash-liniment',
+    alignedRegimes: ['dragon_siege', 'calm'],
+    phCenter: 6.5,
+    reagentCue: 'alum-quenched cinnabar and moss sap',
+    titles: ['Field-Medic Ash Liniment', 'Forge-Coolant Burn Salve', 'Dragonscale Mender Liniment'],
+  },
+
+  // hearth_tonic (6 families -> 18 trials)
+  {
+    effect: 'hearth_tonic',
+    slug: 'saffron-madder-cordial',
+    alignedRegimes: ['glacial_snap', 'calm'],
+    phCenter: 6.3,
+    reagentCue: 'saffron pollen and rose madder distillate',
+    titles: ['Winter-Watch Saffron Tonic', 'Madder-Ember Hearth Cordial', 'Sovereign Hearthfire Tonic'],
+  },
+  {
+    effect: 'hearth_tonic',
+    slug: 'solstice-hearth-reserve',
+    alignedRegimes: ['glacial_snap', 'starfall_conclave'],
+    phCenter: 6.5,
+    reagentCue: 'saffron, rose madder, and starlight aether',
+    titles: ['Solstice Lantern Draught', 'Frost-Ferry Hearth Tonic', 'Solstice Crown-Hearth Reserve'],
+  },
+  {
+    effect: 'hearth_tonic',
+    slug: 'crimson-rose-infusion',
+    alignedRegimes: ['glacial_snap', 'bumper_harvest'],
+    phCenter: 4.8,
+    reagentCue: 'rose madder distillate and saffron pollen',
+    titles: ['Steeped Rose-Pollen Cup', 'Crimson Hearth Infusion', 'Ruby Crucible Warmth Tonic'],
+  },
+  {
+    effect: 'hearth_tonic',
+    slug: 'astral-ember-nectar',
+    alignedRegimes: ['starfall_conclave', 'glacial_snap'],
+    phCenter: 8.4,
+    reagentCue: 'saffron pollen, starlight oil, and pearl lime',
+    titles: ['Star-Warmth Nectar', 'Twilight Conclave Hearth Tonic', 'Celestial Kiln-Pulse Reserve'],
+  },
+  {
+    effect: 'hearth_tonic',
+    slug: 'amber-pollen-brew',
+    alignedRegimes: ['glacial_snap', 'bumper_harvest'],
+    phCenter: 5.6,
+    reagentCue: 'amber resin, saffron, and rose madder',
+    titles: ['Honey-Pollen Morning Brew', 'Amber-Vein Hearth Tonic', 'Golden Comb Winter Elixir'],
+  },
+  {
+    effect: 'hearth_tonic',
+    slug: 'gilded-hearth-elixir',
+    alignedRegimes: ['starfall_conclave', 'calm'],
+    phCenter: 7.2,
+    reagentCue: 'saffron, madder distillate, and starlight',
+    titles: ['Gilt-Spiced Warming Phial', 'Auric Hearthlight Tonic', 'Sun-Throne Hearth Elixir'],
+  },
+
+  // galaxy_elixir (6 families -> 18 trials)
+  {
+    effect: 'galaxy_elixir',
+    slug: 'celestial-strata-draft',
+    alignedRegimes: ['starfall_conclave', 'calm'],
+    phCenter: 8.6,
+    reagentCue: 'cobalt lotus, auric mica, and starlight oil',
+    titles: ['Starlight Novice Draft', 'Obsidian Sky-Strata Elixir', 'Conclave Zenith Galaxy Elixir'],
+  },
+  {
+    effect: 'galaxy_elixir',
+    slug: 'moonveil-aurora-vial',
+    alignedRegimes: ['starfall_conclave', 'bumper_harvest'],
+    phCenter: 7.7,
+    reagentCue: 'cobalt lotus, moonveil dew, and auric mica',
+    titles: ['Moonveil Dew Phial', 'Aurora Horizon Elixir', 'Boreal Crown Galaxy Elixir'],
+  },
+  {
+    effect: 'galaxy_elixir',
+    slug: 'crimson-comet-tincture',
+    alignedRegimes: ['starfall_conclave', 'glacial_snap'],
+    phCenter: 5.7,
+    reagentCue: 'moonveil, auric mica, and rose madder',
+    titles: ['Red-Comet Tincture', 'Nebula-Rose Star Elixir', 'Supernova Prism Elixir'],
+  },
+  {
+    effect: 'galaxy_elixir',
+    slug: 'high-conclave-alkali',
+    alignedRegimes: ['starfall_conclave'],
+    phCenter: 10.1,
+    reagentCue: 'cobalt lotus, starlight oil, and pearl lime',
+    titles: ['Lotus-Alkali Sky Phial', 'Astronomer Alkali Elixir', 'High Conclave Sovereign Vial'],
+  },
+  {
+    effect: 'galaxy_elixir',
+    slug: 'nebula-lotus-phial',
+    alignedRegimes: ['starfall_conclave', 'calm'],
+    phCenter: 7.0,
+    reagentCue: 'moonveil lichen, auric mica, and starlight',
+    titles: ['Lichen-Mist Stargaze Brew', 'Cobalt Nebula Elixir', 'Astral Lattice Masterwork'],
+  },
+  {
+    effect: 'galaxy_elixir',
+    slug: 'gilded-zenith-ampoule',
+    alignedRegimes: ['starfall_conclave', 'calm'],
+    phCenter: 5.1,
+    reagentCue: 'auric mica, moonveil dew, and bismuth salt',
+    titles: ['Mica-Dust Night Ampoule', 'Gilded Comet-Tail Elixir', 'Aether-Crown Galaxy Ampoule'],
+  },
+
+  // neutralizing_salve (6 families -> 18 trials)
+  {
+    effect: 'neutralizing_salve',
+    slug: 'bismuth-lime-buffer',
+    alignedRegimes: ['calm', 'bumper_harvest'],
+    phCenter: 7.3,
+    reagentCue: 'bismuth vitriol and chalk pearl lime',
+    titles: ['Apprentice Litmus Buffer', 'Scales-Guild Lime Salve', 'Equilibrium Master Buffer'],
+  },
+  {
+    effect: 'neutralizing_salve',
+    slug: 'acid-quench-unguent',
+    alignedRegimes: ['dragon_siege', 'calm'],
+    phCenter: 5.0,
+    reagentCue: 'bismuth vitriol tempered with pearl lime',
+    titles: ['Vitriol Taming Paste', 'Mine-Fume Neutralizer', 'Deep-Shaft Acid Quencher'],
+  },
+  {
+    effect: 'neutralizing_salve',
+    slug: 'pearl-alum-alkali',
+    alignedRegimes: ['bumper_harvest', 'calm'],
+    phCenter: 9.4,
+    reagentCue: 'chalk pearl lime and glacial alum shard',
+    titles: ['Chalk-Alum Wash', 'Alkali Stone-Wash Salve', 'White-Pearl Neutralizing Balm'],
+  },
+  {
+    effect: 'neutralizing_salve',
+    slug: 'vitriol-ash-neutralizer',
+    alignedRegimes: ['dragon_siege', 'bumper_harvest'],
+    phCenter: 6.1,
+    reagentCue: 'bismuth salt, pearl lime, and glacial alum',
+    titles: ['Ash-Salt Balance Salve', 'Crucible-Cleanse Neutralizer', 'Royal Assay Scales Salve'],
+  },
+  {
+    effect: 'neutralizing_salve',
+    slug: 'lime-crystal-salve',
+    alignedRegimes: ['bumper_harvest', 'starfall_conclave'],
+    phCenter: 9.8,
+    reagentCue: 'chalk pearl lime, glacial alum, and bismuth',
+    titles: ['Pearl-Crystal Tincture', 'Alkali-Horizon Salve', 'Crystalline Caustic Counter'],
+  },
+  {
+    effect: 'neutralizing_salve',
+    slug: 'apothecary-scales-balm',
+    alignedRegimes: ['calm', 'dragon_siege'],
+    phCenter: 7.0,
+    reagentCue: 'calibrated bismuth vitriol and pearl lime',
+    titles: ['Plum-Violet Test Salve', 'Twin-Pan Equilibrium Balm', 'Exact-Neutral Guild Standard'],
+  },
+
+  // soothing_draught (6 families -> 18 trials)
+  {
+    effect: 'soothing_draught',
+    slug: 'amber-lotus-draft',
+    alignedRegimes: ['calm', 'bumper_harvest'],
+    phCenter: 7.4,
+    reagentCue: 'amber honey resin and cobalt lotus nectar',
+    titles: ['Amber-Lotus Nightcap', 'Velvet Sleep Draught', 'Archon Repose Soothing Draft'],
+  },
+  {
+    effect: 'soothing_draught',
+    slug: 'moss-honey-syrup',
+    alignedRegimes: ['bumper_harvest', 'glacial_snap'],
+    phCenter: 5.5,
+    reagentCue: 'amber honey resin and verdigris moss sap',
+    titles: ['Honey-Moss Syrup', 'Orchard Quietude Draught', 'Verdant Velvet Somnolence'],
+  },
+  {
+    effect: 'soothing_draught',
+    slug: 'velvet-rose-cordial',
+    alignedRegimes: ['glacial_snap', 'bumper_harvest'],
+    phCenter: 4.4,
+    reagentCue: 'amber resin, moss sap, and rose madder',
+    titles: ['Rose-Honey Calming Cup', 'Crimson Velvet Draught', 'Nectar-of-Rest Grand Cordial'],
+  },
+  {
+    effect: 'soothing_draught',
+    slug: 'lotus-honey-emulsion',
+    alignedRegimes: ['bumper_harvest', 'glacial_snap'],
+    phCenter: 8.6,
+    reagentCue: 'amber resin, cobalt lotus, and pearl lime',
+    titles: ['Sweet-Lotus Emulsion', 'Lotus-Amber Peace Vial', 'Moonlit Pavilion Emulsion'],
+  },
+  {
+    effect: 'soothing_draught',
+    slug: 'slumber-botanical-nectar',
+    alignedRegimes: ['calm', 'bumper_harvest'],
+    phCenter: 6.4,
+    reagentCue: 'amber honey, verdigris sap, and cobalt lotus',
+    titles: ['Meadow-Sap Nectar', 'Botanical Stillness Draught', 'Sanctuary Four-Herb Quietude'],
+  },
+  {
+    effect: 'soothing_draught',
+    slug: 'nightshade-balm-draught',
+    alignedRegimes: ['starfall_conclave', 'calm'],
+    phCenter: 7.7,
+    reagentCue: 'amber honey, cobalt lotus, and starlight oil',
+    titles: ['Dusk-Aether Calming Vial', 'Starlit Velvet Draught', 'Astral Repose Soothing Draft'],
+  },
+];
+
+function hashSeedUint32(input: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+function hashHex6(input: string): string {
+  return hashSeedUint32(input).toString(16).padStart(8, '0').slice(0, 6);
+}
+
+function roundTwoDecimals(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function toRomanNumeral(n: number): string {
+  const numerals: ReadonlyArray<readonly [number, string]> = [
+    [100, 'C'],
+    [90, 'XC'],
+    [50, 'L'],
+    [40, 'XL'],
+    [10, 'X'],
+    [9, 'IX'],
+    [5, 'V'],
+    [4, 'IV'],
+    [1, 'I'],
+  ];
+  let rem = Math.max(1, Math.floor(n));
+  let out = '';
+  for (const [val, sym] of numerals) {
+    while (rem >= val) {
+      out += sym;
+      rem -= val;
+    }
+  }
+  return out;
+}
+
+function buildProceduralCommissionCatalog(): readonly ProceduralCommissionEntry[] {
+  const entries: ProceduralCommissionEntry[] = [];
+
+  for (let familyIdx = 0; familyIdx < COMMISSION_FAMILIES.length; familyIdx++) {
+    const family = COMMISSION_FAMILIES[familyIdx];
+    for (let tierIdx = 0; tierIdx < TIER_ORDER.length; tierIdx++) {
+      const tier = TIER_ORDER[tierIdx];
+      const minLayers =
+        tierIdx === 0 ? 2 : tierIdx === 1 ? 3 : familyIdx % 2 === 0 ? 4 : 3;
+      const minLayerCrispness =
+        tierIdx === 0
+          ? roundTwoDecimals(0.55 + (familyIdx % 5) * 0.03)
+          : tierIdx === 1
+            ? roundTwoDecimals(0.68 + (familyIdx % 5) * 0.02)
+            : roundTwoDecimals(0.79 + (familyIdx % 4) * 0.02);
+      const minPurity =
+        tierIdx === 0
+          ? roundTwoDecimals(0.68 + (familyIdx % 4) * 0.02)
+          : tierIdx === 1
+            ? roundTwoDecimals(0.76 + (familyIdx % 4) * 0.02)
+            : roundTwoDecimals(0.84 + (familyIdx % 3) * 0.02);
+      const minPeakTempC =
+        tierIdx === 0
+          ? 45 + (familyIdx % 5) * 2
+          : tierIdx === 1
+            ? 56 + (familyIdx % 6) * 2
+            : 68 + (familyIdx % 6) * 2;
+      const phHalfWidth = tierIdx === 0 ? 1.5 : tierIdx === 1 ? 1.1 : 0.85;
+      const phLow = roundTwoDecimals(clamp(family.phCenter - phHalfWidth, 2.2, 10.2));
+      const phHigh = roundTwoDecimals(clamp(family.phCenter + phHalfWidth, 3.2, 11.2));
+      const rewardCrowns =
+        tierIdx === 0
+          ? 46 + (familyIdx % 6) * 4
+          : tierIdx === 1
+            ? 92 + (familyIdx % 6) * 7
+            : 172 + (familyIdx % 6) * 12 + (minLayers === 4 ? 14 : 0);
+
+      const id = `proc-${tier}-${family.slug}-${hashHex6(`${tier}:${family.slug}:${family.effect}`)}`;
+      const description =
+        `Brew ${minLayers}+ crisp strata of ${family.reagentCue} past ${minPeakTempC} C ` +
+        `within pH ${phLow.toFixed(1)}-${phHigh.toFixed(1)}.`;
+
+      entries.push({
+        slug: family.slug,
+        alignedRegimes: family.alignedRegimes,
+        spec: {
+          id,
+          tier,
+          title: family.titles[tierIdx],
+          description,
+          requiredEffect: family.effect,
+          minLayers,
+          minLayerCrispness,
+          minPurity,
+          targetPh: [phLow, phHigh],
+          minPeakTempC,
+          rewardCrowns,
+        },
+      });
+    }
+  }
+
+  return entries;
+}
+
+const PROCEDURAL_COMMISSION_CATALOG: readonly ProceduralCommissionEntry[] =
+  buildProceduralCommissionCatalog();
+
+function cloneCommissionSpec(spec: FestivalCommissionSpec): FestivalCommissionSpec {
+  return {
+    ...spec,
+    targetPh: spec.targetPh ? [spec.targetPh[0], spec.targetPh[1]] : undefined,
+  };
+}
+
+function buildWaveCommission(
+  base: ProceduralCommissionEntry,
+  wave: number
+): FestivalCommissionSpec {
+  const waveTag = `w${wave}`;
+  const hash = hashHex6(`${base.spec.id}:${waveTag}`);
+  return {
+    ...cloneCommissionSpec(base.spec),
+    id: `proc-${base.spec.tier}-${base.slug}-${waveTag}-${hash}`,
+    title: `${base.spec.title} (${toRomanNumeral(wave + 1)} Charter)`,
+  };
+}
+
+function pickFromPool(
+  pool: readonly ProceduralCommissionEntry[],
+  tier: FestivalCommissionSpec['tier'],
+  safeRegime: CommissionRegime,
+  completedSet: ReadonlySet<string>,
+  pickedIds: ReadonlySet<string>,
+  pickedTitles: ReadonlySet<string>,
+  usedEffects: ReadonlySet<PotionEffectTag>
+): FestivalCommissionSpec | null {
+  const tierPool = pool.filter((entry) => entry.spec.tier === tier);
+
+  const passes = [
+    (entry: ProceduralCommissionEntry) =>
+      entry.alignedRegimes.includes(safeRegime) && !usedEffects.has(entry.spec.requiredEffect),
+    (entry: ProceduralCommissionEntry) => entry.alignedRegimes.includes(safeRegime),
+    (entry: ProceduralCommissionEntry) => !usedEffects.has(entry.spec.requiredEffect),
+    () => true,
+  ];
+
+  for (const predicate of passes) {
+    for (const entry of tierPool) {
+      if (
+        !completedSet.has(entry.spec.id) &&
+        !pickedIds.has(entry.spec.id) &&
+        !pickedTitles.has(entry.spec.title) &&
+        predicate(entry)
+      ) {
+        return cloneCommissionSpec(entry.spec);
+      }
+    }
+  }
+
+  // Endless deterministic charter waves if all base trials for this tier were already completed.
+  for (let wave = 1; wave <= 64; wave++) {
+    for (const entry of tierPool) {
+      const candidate = buildWaveCommission(entry, wave);
+      if (
+        !completedSet.has(candidate.id) &&
+        !pickedIds.has(candidate.id) &&
+        !pickedTitles.has(candidate.title)
+      ) {
+        return candidate;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Generates deterministic, non-repeating, chemically solvable guild commissions from a
+ * 108-trial catalog across all 6 PotionEffectTags and 5 MarketRegimes.
+ */
+export function generateProceduralCommissions(
+  opts: ProceduralCommissionOptions
+): FestivalCommissionSpec[] {
+  const safeRegime: CommissionRegime = ALL_COMMISSION_REGIMES.includes(opts.regime)
+    ? opts.regime
+    : 'calm';
+  const safeDay = Math.max(1, Math.floor(finiteOr(opts.day, 1)));
+  const safeSeed = typeof opts.seed === 'string' && opts.seed.length > 0 ? opts.seed : 'guild-default';
+  const rawCount = opts.count === undefined ? 3 : Math.floor(finiteOr(opts.count, 3));
+  const count = Math.max(0, rawCount);
+
+  if (count === 0) {
+    return [];
+  }
+
+  const completedSet = new Set<string>(opts.completedIds ?? []);
+
+  const rankedPool = [...PROCEDURAL_COMMISSION_CATALOG].sort((a, b) => {
+    const aAligned = a.alignedRegimes.includes(safeRegime) ? 0 : 1;
+    const bAligned = b.alignedRegimes.includes(safeRegime) ? 0 : 1;
+    if (aAligned !== bAligned) {
+      return aAligned - bAligned;
+    }
+    const aHash = hashSeedUint32(`${safeSeed}:${safeDay}:${safeRegime}:${a.spec.id}`);
+    const bHash = hashSeedUint32(`${safeSeed}:${safeDay}:${safeRegime}:${b.spec.id}`);
+    if (aHash !== bHash) {
+      return aHash - bHash;
+    }
+    return a.spec.id < b.spec.id ? -1 : a.spec.id > b.spec.id ? 1 : 0;
+  });
+
+  const tierSequence: FestivalCommissionSpec['tier'][] = [];
+  if (count === 3) {
+    tierSequence.push('apprentice', 'journeyman', 'grandmaster');
+  } else {
+    const startOffset =
+      (safeDay + completedSet.size + hashSeedUint32(`${safeSeed}:${safeRegime}`)) % TIER_ORDER.length;
+    for (let i = 0; i < count; i++) {
+      tierSequence.push(TIER_ORDER[(startOffset + i) % TIER_ORDER.length]);
+    }
+  }
+
+  const picked: FestivalCommissionSpec[] = [];
+  const pickedIds = new Set<string>();
+  const pickedTitles = new Set<string>();
+  const usedEffects = new Set<PotionEffectTag>();
+
+  for (const tier of tierSequence) {
+    const chosen = pickFromPool(
+      rankedPool,
+      tier,
+      safeRegime,
+      completedSet,
+      pickedIds,
+      pickedTitles,
+      usedEffects
+    );
+    if (chosen) {
+      picked.push(chosen);
+      pickedIds.add(chosen.id);
+      pickedTitles.add(chosen.title);
+      usedEffects.add(chosen.requiredEffect);
+    }
+  }
+
+  return picked;
 }

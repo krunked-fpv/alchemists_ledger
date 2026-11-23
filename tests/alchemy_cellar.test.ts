@@ -5,8 +5,11 @@ import {
   REAGENT_CATALOG,
   computeEffectiveShearCrit,
   evaluateCommission,
+  generateProceduralCommissions,
   getPhIndicatorRgb,
+  type CommissionRegime,
   type FestivalCommissionSpec,
+  type PotionEffectTag,
   type ReagentId,
 } from '../src/alchemy/index';
 import * as ReagentsDirect from '../src/alchemy/reagents';
@@ -290,6 +293,485 @@ describe('CauldronSimulator Thermodynamics, Gravity Sorting & Shear Physics', ()
     expect(failResult.bonusMultiplier).toBe(0);
     expect(failResult.reason).toContain('Effect mismatch');
     expect(failResult.reason).toContain('Peak temperature');
+  });
+
+  it('produces richly varied evocative potion names across recipes, temps, pH, shear, and seals', () => {
+    expect(ReagentsDirect.generateProceduralCommissions).toBe(generateProceduralCommissions);
+
+    const brew = (
+      layers: ReadonlyArray<{ id: ReagentId; ml: number }>,
+      opts?: {
+        bellows?: number;
+        stirScale?: number;
+        vessel?: 'prism' | 'teardrop' | 'crescent' | 'carafe';
+        color?: 'crimson' | 'verdigris' | 'gold' | 'indigo';
+        crest?: 'phoenix' | 'alembic' | 'crescent' | 'scales';
+        stamped?: boolean;
+      }
+    ) => {
+      const sim = new CauldronSimulator('grandmaster');
+      for (const layer of layers) {
+        sim.addReagent(layer.id, REAGENT_CATALOG[layer.id].preferredPrep, layer.ml);
+      }
+      if (opts?.bellows) {
+        sim.pumpBellows(opts.bellows);
+      }
+      if (opts?.stirScale) {
+        const crit = sim.getState().shearCritRadS;
+        sim.applyLadleStir(crit * opts.stirScale, 3.0);
+      }
+      return sim.decantToPotion(
+        opts?.vessel ?? 'carafe',
+        {
+          color: opts?.color ?? 'gold',
+          crest: opts?.crest ?? 'phoenix',
+          stamped: opts?.stamped ?? true,
+        },
+        1
+      );
+    };
+
+    const suminagashi = brew(
+      [
+        { id: 'amber_honey_resin', ml: 30 },
+        { id: 'starlight_aether_oil', ml: 25 },
+      ],
+      { stirScale: 3.0, vessel: 'teardrop', color: 'indigo', crest: 'crescent' }
+    );
+    const velvet = brew(
+      [
+        { id: 'amber_honey_resin', ml: 35 },
+        { id: 'verdigris_moss_sap', ml: 20 },
+      ],
+      { vessel: 'carafe', color: 'verdigris', crest: 'alembic' }
+    );
+    const prismatic = brew(
+      [
+        { id: 'cinnabar_sulfur_ash', ml: 25 },
+        { id: 'saffron_hearth_pollen', ml: 25 },
+      ],
+      { vessel: 'prism', color: 'crimson', crest: 'phoenix' }
+    );
+    const stratified = brew(
+      [
+        { id: 'cinnabar_sulfur_ash', ml: 25 },
+        { id: 'saffron_hearth_pollen', ml: 25 },
+        { id: 'rose_madder_distillate', ml: 25 },
+      ],
+      { vessel: 'carafe', color: 'crimson', crest: 'phoenix' }
+    );
+    const laminar = brew(
+      [
+        { id: 'verdigris_moss_sap', ml: 25 },
+        { id: 'rose_madder_distillate', ml: 25 },
+      ],
+      { vessel: 'teardrop', color: 'verdigris', crest: 'scales' }
+    );
+    const opalescent = brew(
+      [
+        { id: 'cobalt_lotus_nectar', ml: 25 },
+        { id: 'auric_mica_suspension', ml: 25 },
+        { id: 'starlight_aether_oil', ml: 25 },
+      ],
+      { vessel: 'crescent', color: 'gold', crest: 'crescent' }
+    );
+    const crystalline = brew(
+      [
+        { id: 'bismuth_vitriol_salt', ml: 25 },
+        { id: 'glacial_alum_shard', ml: 25 },
+      ],
+      { vessel: 'teardrop', color: 'indigo', crest: 'scales' }
+    );
+    const micaGiltWarm = brew(
+      [
+        { id: 'saffron_hearth_pollen', ml: 20 },
+        { id: 'auric_mica_suspension', ml: 30 },
+      ],
+      { vessel: 'carafe', color: 'gold', crest: 'alembic' }
+    );
+    const crystallineHeated = brew(
+      [
+        { id: 'bismuth_vitriol_salt', ml: 25 },
+        { id: 'glacial_alum_shard', ml: 25 },
+      ],
+      { bellows: 3.0, vessel: 'teardrop', color: 'indigo', crest: 'scales' }
+    );
+    const prismaticDifferentCrest = brew(
+      [
+        { id: 'cinnabar_sulfur_ash', ml: 25 },
+        { id: 'saffron_hearth_pollen', ml: 25 },
+      ],
+      { vessel: 'prism', color: 'indigo', crest: 'scales' }
+    );
+    const prismaticUnstamped = brew(
+      [
+        { id: 'cinnabar_sulfur_ash', ml: 25 },
+        { id: 'saffron_hearth_pollen', ml: 25 },
+      ],
+      { vessel: 'prism', color: 'crimson', crest: 'phoenix', stamped: false }
+    );
+    const quadStrata = brew(
+      [
+        { id: 'amber_honey_resin', ml: 25 },
+        { id: 'saffron_hearth_pollen', ml: 30 },
+        { id: 'rose_madder_distillate', ml: 20 },
+        { id: 'starlight_aether_oil', ml: 15 },
+      ],
+      { bellows: 1.5, vessel: 'carafe', color: 'gold', crest: 'phoenix' }
+    );
+    const singleLayer = brew(
+      [{ id: 'bismuth_vitriol_salt', ml: 25 }],
+      { vessel: 'prism', color: 'indigo', crest: 'alembic' }
+    );
+    const emptyVessel = new CauldronSimulator('apprentice').decantToPotion(
+      'carafe',
+      { color: 'gold', crest: 'scales', stamped: false },
+      1
+    );
+
+    const names = [
+      suminagashi.name,
+      velvet.name,
+      prismatic.name,
+      stratified.name,
+      laminar.name,
+      opalescent.name,
+      crystalline.name,
+      micaGiltWarm.name,
+      crystallineHeated.name,
+      prismaticDifferentCrest.name,
+      prismaticUnstamped.name,
+      quadStrata.name,
+      singleLayer.name,
+    ];
+
+    expect(new Set(names).size).toBe(names.length);
+    expect(emptyVessel.name).toBe('Empty Soothing Draught Vessel');
+    expect(quadStrata.name).toContain('Saffron');
+    expect(quadStrata.name).toContain('Aether-Oil');
+    expect(suminagashi.name).toContain('Suminagashi');
+    expect(velvet.name).toContain('Velvet');
+    expect(prismatic.name).toContain('Prismatic');
+    expect(stratified.name).toContain('Stratified');
+    expect(laminar.name).toContain('Laminar');
+    expect(opalescent.name).toContain('Opalescent');
+    expect(crystalline.name).toContain('Crystalline');
+
+    // Thermal, pH, and mica accents respond distinctly
+    expect(crystalline.name).toContain('Rime-Cooled');
+    expect(crystallineHeated.name).toContain('Sun-Tempered');
+    expect(opalescent.name).toContain('Alkali-Balanced');
+    expect(laminar.name).toContain('Vitriolic');
+    expect(micaGiltWarm.name).toContain('Mica-Gilt');
+
+    // Multi-layer names embed primary + secondary strata nouns and vary on crest/vessel
+    expect(suminagashi.name).toContain('Amber');
+    expect(suminagashi.name).toContain('Aether-Oil');
+    expect(prismatic.name).not.toBe(prismaticDifferentCrest.name);
+    expect(prismatic.name).not.toBe(prismaticUnstamped.name);
+    expect(names.every((n) => !n.startsWith('Layered Amber Soothing Draught'))).toBe(true);
+  });
+});
+
+describe('Procedural Commission Generation & Chemical Solvability', () => {
+  const REGIMES: readonly CommissionRegime[] = [
+    'calm',
+    'dragon_siege',
+    'bumper_harvest',
+    'glacial_snap',
+    'starfall_conclave',
+  ];
+
+  const ALL_EFFECTS: readonly PotionEffectTag[] = [
+    'fire_ward',
+    'burn_salve',
+    'hearth_tonic',
+    'galaxy_elixir',
+    'neutralizing_salve',
+    'soothing_draught',
+  ];
+
+  it('draws 40+ sequential commissions with zero duplicate IDs or titles and strict chemical validity', () => {
+    const completedIds: string[] = [];
+    const seenIds = new Set<string>();
+    const seenTitles = new Set<string>();
+    const collected: FestivalCommissionSpec[] = [];
+
+    for (let step = 0; step < 14; step++) {
+      const regime = REGIMES[step % REGIMES.length];
+      const batch = generateProceduralCommissions({
+        regime,
+        day: step + 1,
+        completedIds,
+        seed: 'guild-chronicle-seed',
+        count: 3,
+      });
+
+      expect(batch).toHaveLength(3);
+      expect(batch.map((c) => c.tier)).toEqual(['apprentice', 'journeyman', 'grandmaster']);
+
+      for (const comm of batch) {
+        expect(comm.id).toMatch(/^proc-(apprentice|journeyman|grandmaster)-[a-z0-9-]+-[0-9a-f]{6}$/);
+        expect(seenIds.has(comm.id)).toBe(false);
+        expect(seenTitles.has(comm.title)).toBe(false);
+        expect(comm.minLayers).toBeGreaterThanOrEqual(2);
+        expect(comm.minLayers).toBeLessThanOrEqual(4);
+        expect(comm.minLayerCrispness).toBeGreaterThanOrEqual(0.55);
+        expect(comm.minLayerCrispness).toBeLessThanOrEqual(0.9);
+        expect(comm.minPurity).toBeGreaterThanOrEqual(0.68);
+        expect(comm.minPurity).toBeLessThanOrEqual(0.92);
+        expect(comm.targetPh).toBeDefined();
+        if (comm.targetPh) {
+          expect(comm.targetPh[0]).toBeGreaterThanOrEqual(2.0);
+          expect(comm.targetPh[1]).toBeLessThanOrEqual(11.5);
+          expect(comm.targetPh[0]).toBeLessThan(comm.targetPh[1]);
+        }
+        if (comm.minPeakTempC !== undefined) {
+          expect(comm.minPeakTempC).toBeGreaterThanOrEqual(45);
+          expect(comm.minPeakTempC).toBeLessThanOrEqual(78);
+        }
+
+        seenIds.add(comm.id);
+        seenTitles.add(comm.title);
+        completedIds.push(comm.id);
+        collected.push(comm);
+      }
+    }
+
+    expect(collected).toHaveLength(42);
+    expect(seenIds.size).toBe(42);
+    expect(seenTitles.size).toBe(42);
+
+    // Determinism check for identical arguments
+    const replayA = generateProceduralCommissions({
+      regime: 'dragon_siege',
+      day: 7,
+      completedIds: completedIds.slice(0, 9),
+      seed: 'deterministic-seed',
+      count: 3,
+    });
+    const replayB = generateProceduralCommissions({
+      regime: 'dragon_siege',
+      day: 7,
+      completedIds: completedIds.slice(0, 9),
+      seed: 'deterministic-seed',
+      count: 3,
+    });
+    expect(replayA).toEqual(replayB);
+
+    // Regime preference check
+    const siegeBatch = generateProceduralCommissions({
+      regime: 'dragon_siege',
+      day: 1,
+      completedIds: [],
+      seed: 'regime-pref',
+      count: 3,
+    });
+    for (const c of siegeBatch) {
+      expect(['fire_ward', 'burn_salve', 'neutralizing_salve']).toContain(c.requiredEffect);
+    }
+
+    const starfallBatch = generateProceduralCommissions({
+      regime: 'starfall_conclave',
+      day: 1,
+      completedIds: [],
+      seed: 'regime-pref',
+      count: 3,
+    });
+    for (const c of starfallBatch) {
+      expect(['galaxy_elixir', 'hearth_tonic', 'soothing_draught', 'fire_ward', 'burn_salve', 'neutralizing_salve']).toContain(c.requiredEffect);
+    }
+    expect(starfallBatch.some((c) => c.requiredEffect === 'galaxy_elixir')).toBe(true);
+
+    // Single-commission sequential draw under a single regime also never repeats IDs or titles
+    const singleCompleted: string[] = [];
+    const singleTitles = new Set<string>();
+    const singleTiers = new Set<string>();
+    for (let i = 0; i < 45; i++) {
+      const [item] = generateProceduralCommissions({
+        regime: 'calm',
+        day: 1,
+        completedIds: singleCompleted,
+        seed: 'single-draw-seed',
+        count: 1,
+      });
+      expect(item).toBeDefined();
+      expect(singleCompleted).not.toContain(item.id);
+      expect(singleTitles.has(item.title)).toBe(false);
+      singleCompleted.push(item.id);
+      singleTitles.add(item.title);
+      singleTiers.add(item.tier);
+    }
+    expect(new Set(singleCompleted).size).toBe(45);
+    expect(singleTitles.size).toBe(45);
+    expect(singleTiers.size).toBe(3);
+  });
+
+  it('maintains >= 72 unique trials covering all 6 effects and proves every trial solvable in CauldronSimulator', () => {
+    // Draw the full base pool (108 trials across 36 batches of 3) plus overflow wave check
+    const completedIds: string[] = [];
+    const pool: FestivalCommissionSpec[] = [];
+
+    for (let step = 0; step < 40; step++) {
+      const batch = generateProceduralCommissions({
+        regime: REGIMES[step % REGIMES.length],
+        day: step + 1,
+        completedIds,
+        seed: 'full-pool-audit',
+        count: 3,
+      });
+      expect(batch).toHaveLength(3);
+      for (const comm of batch) {
+        completedIds.push(comm.id);
+        pool.push(comm);
+      }
+    }
+
+    // 120 sequential commissions (108 base + 12 overflow wave) with zero ID or title repeats
+    expect(new Set(pool.map((c) => c.id)).size).toBe(120);
+    expect(new Set(pool.map((c) => c.title)).size).toBe(120);
+
+    const basePool = pool.slice(0, 108);
+    expect(basePool.length).toBeGreaterThanOrEqual(72);
+
+    const effectCounts = new Map<PotionEffectTag, number>();
+    for (const effect of ALL_EFFECTS) {
+      effectCounts.set(effect, 0);
+    }
+    for (const comm of basePool) {
+      effectCounts.set(comm.requiredEffect, (effectCounts.get(comm.requiredEffect) ?? 0) + 1);
+    }
+    for (const effect of ALL_EFFECTS) {
+      expect(effectCounts.get(effect)).toBeGreaterThanOrEqual(12);
+    }
+
+    // Solve every single one of all 120 generated commissions with CauldronSimulator('grandmaster')
+    const effectReagents: Record<PotionEffectTag, readonly ReagentId[]> = {
+      fire_ward: ['cinnabar_sulfur_ash', 'bismuth_vitriol_salt', 'saffron_hearth_pollen'],
+      burn_salve: ['glacial_alum_shard', 'verdigris_moss_sap', 'moonveil_lichen_dew', 'cinnabar_sulfur_ash'],
+      hearth_tonic: ['saffron_hearth_pollen', 'rose_madder_distillate', 'starlight_aether_oil'],
+      galaxy_elixir: ['cobalt_lotus_nectar', 'moonveil_lichen_dew', 'auric_mica_suspension', 'starlight_aether_oil'],
+      neutralizing_salve: ['bismuth_vitriol_salt', 'chalk_pearl_lime', 'glacial_alum_shard'],
+      soothing_draught: ['amber_honey_resin', 'verdigris_moss_sap', 'cobalt_lotus_nectar', 'rose_madder_distillate'],
+    };
+
+    const neutralSupportReagents: readonly ReagentId[] = [
+      'auric_mica_suspension',
+      'amber_honey_resin',
+      'chalk_pearl_lime',
+      'bismuth_vitriol_salt',
+      'glacial_alum_shard',
+      'starlight_aether_oil',
+      'rose_madder_distillate',
+      'cobalt_lotus_nectar',
+    ];
+
+    const trySolveCommission = (comm: FestivalCommissionSpec): boolean => {
+      const primaries = effectReagents[comm.requiredEffect];
+      const candidates = [...new Set([...primaries, ...neutralSupportReagents])];
+      const [minPh, maxPh] = comm.targetPh ?? [1.5, 12.5];
+      const targetMidPh = (minPh + maxPh) / 2;
+
+      const attemptWithSeedPair = (firstId: ReagentId, secondId: ReagentId): boolean => {
+        const sim = new CauldronSimulator('grandmaster');
+        const chosen = new Set<ReagentId>();
+        const addAndTrack = (id: ReagentId, ml: number) => {
+          sim.addReagent(id, REAGENT_CATALOG[id].preferredPrep, ml);
+          chosen.add(id);
+        };
+
+        addAndTrack(firstId, 25);
+        addAndTrack(secondId, 25);
+
+        while (sim.getState().layers.length < comm.minLayers) {
+          const curPh = sim.getState().ph;
+          let bestId: ReagentId | null = null;
+          let bestScore = Number.POSITIVE_INFINITY;
+
+          for (const cand of candidates) {
+            if (chosen.has(cand)) continue;
+            const spec = REAGENT_CATALOG[cand];
+            const isPrimary = primaries.includes(cand);
+            const phDist = Math.abs(curPh + spec.phShift * 0.7 - targetMidPh);
+            const score = phDist - (isPrimary ? 1.2 : 0);
+            if (score < bestScore) {
+              bestScore = score;
+              bestId = cand;
+            }
+          }
+
+          if (!bestId) break;
+          addAndTrack(bestId, 20);
+        }
+
+        for (let step = 0; step < 6; step++) {
+          const st = sim.getState();
+          const phOk = st.ph >= minPh && st.ph <= maxPh;
+          const effOk = st.dominantEffect === comm.requiredEffect;
+          if (phOk && effOk) break;
+
+          if (!effOk) {
+            const boostId =
+              primaries.find((id) =>
+                st.ph < minPh
+                  ? REAGENT_CATALOG[id].phShift >= 0
+                  : REAGENT_CATALOG[id].phShift <= 0
+              ) ?? primaries[0];
+            addAndTrack(boostId, 15);
+            continue;
+          }
+
+          const needHigherPh = st.ph < minPh;
+          const adjuster = needHigherPh
+            ? (primaries.find((id) => REAGENT_CATALOG[id].phShift > 0.3) ?? 'chalk_pearl_lime')
+            : (primaries.find((id) => REAGENT_CATALOG[id].phShift < -0.3) ?? 'bismuth_vitriol_salt');
+          addAndTrack(adjuster, 12);
+          if (sim.getState().dominantEffect !== comm.requiredEffect) {
+            const counterPrimary =
+              primaries.find((id) =>
+                needHigherPh
+                  ? REAGENT_CATALOG[id].phShift >= -1.8
+                  : REAGENT_CATALOG[id].phShift <= 0.5
+              ) ?? primaries[0];
+            addAndTrack(counterPrimary, 15);
+          }
+        }
+
+        const targetTemp = comm.minPeakTempC ?? 45;
+        for (let p = 0; p < 12; p++) {
+          const st = sim.getState();
+          if (st.temperatureC >= targetTemp) break;
+          const needed = targetTemp - st.temperatureC + 2;
+          const impulse = Math.min(1.0, Math.max(0.25, needed / 12));
+          sim.pumpBellows(impulse);
+        }
+
+        const potion = sim.decantToPotion(
+          'carafe',
+          { color: 'gold', crest: 'phoenix', stamped: true },
+          1
+        );
+        return evaluateCommission(potion, comm).satisfied;
+      };
+
+      for (let i = 0; i < primaries.length; i++) {
+        for (let j = i + 1; j < primaries.length; j++) {
+          if (attemptWithSeedPair(primaries[i], primaries[j])) {
+            return true;
+          }
+        }
+      }
+      return attemptWithSeedPair(primaries[0], 'chalk_pearl_lime') ||
+        attemptWithSeedPair(primaries[0], 'auric_mica_suspension');
+    };
+
+    const unsolvable: string[] = [];
+    for (const comm of pool) {
+      if (!trySolveCommission(comm)) {
+        unsolvable.push(`${comm.id} (${comm.title}, ${comm.requiredEffect}, pH=${comm.targetPh?.join('-')}, layers=${comm.minLayers})`);
+      }
+    }
+    expect(unsolvable).toEqual([]);
   });
 });
 

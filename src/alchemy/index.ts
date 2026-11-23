@@ -5,6 +5,7 @@ export {
   computeEffectiveShearCrit,
   CauldronSimulator,
   evaluateCommission,
+  generateProceduralCommissions,
 } from './reagents';
 
 export type {
@@ -19,4 +20,6 @@ export type {
   WaxSealSpec,
   CraftedPotion,
   FestivalCommissionSpec,
+  CommissionRegime,
+  ProceduralCommissionOptions,
 } from './reagents';
