@@ -419,16 +419,29 @@ export function computeCellarHedgeYield(
   return roundHalfCrown(perUnitCrownValue * units);
 }
 
-export function pickDailyMarketRegime(dateSeed: string, day: number): MarketRegime {
+export function pickDailyMarketRegime(
+  dateSeed: string,
+  day: number,
+  prevRegime?: MarketRegime
+): MarketRegime {
   const safeSeed = typeof dateSeed === 'string' ? dateSeed : '';
   const safeDay = Number.isFinite(day) ? Math.floor(day) : 1;
   const bucket = hashSeedToUint32(`${safeSeed}::day::${safeDay}`) % 100;
 
-  if (bucket < 28) return 'calm';
-  if (bucket < 46) return 'dragon_siege';
-  if (bucket < 64) return 'bumper_harvest';
-  if (bucket < 82) return 'glacial_snap';
-  return 'starfall_conclave';
+  let candidate: MarketRegime;
+  if (bucket < 28) candidate = 'calm';
+  else if (bucket < 46) candidate = 'dragon_siege';
+  else if (bucket < 64) candidate = 'bumper_harvest';
+  else if (bucket < 82) candidate = 'glacial_snap';
+  else candidate = 'starfall_conclave';
+
+  if (prevRegime !== undefined && candidate === prevRegime) {
+    const alternates = ALL_MARKET_REGIMES.filter((r) => r !== prevRegime);
+    const altHash = hashSeedToUint32(`${safeSeed}::day::${safeDay}::alt::${prevRegime}`);
+    return alternates[altHash % alternates.length];
+  }
+
+  return candidate;
 }
 
 /**
