@@ -453,6 +453,14 @@ export class ApothecaryRenderer {
   private lastDtSec = 1 / 60;
   private lastMotionTimeSec = -10;
 
+  // Per-canvas warm-up, visibility & dirty state (deferred updates recorded while hidden)
+  private cauldronWarmed = false;
+  private decantWarmed = false;
+  private windowWarmed = false;
+  private cauldronDirty = true;
+  private decantDirty = true;
+  private windowDirty = true;
+
   // Cauldron simulation state
   private cauldronLayers: PackedLayerData = packLayerVisuals([]);
   private temperatureNorm = 0.05; // ~20C
@@ -466,6 +474,10 @@ export class ApothecaryRenderer {
   private ladleOmega = 0;
   private rippleOrigin: [number, number] = [0.5, 0.5];
   private ripplePhase = 0;
+  private celebrationRippleActive = false;
+  private burstGlow = 0;
+  private burstDecayRate = 1 / 1.2;
+  private readonly burstColorsScratch = new Float32Array(12);
 
   // Decant vessel state
   private decantVessel: PotionVessel = 'prism';
@@ -560,6 +572,8 @@ export class ApothecaryRenderer {
           },
           () => {
             this.disposeCauldronGl();
+            this.cauldronWarmed = false;
+            this.cauldronDirty = true;
             this.initCauldronBackend();
           },
         );
@@ -580,6 +594,7 @@ export class ApothecaryRenderer {
     fragSource: string,
     assignGl: (pipe: SinglePassGlPipeline | null) => void,
     assign2d: (ctx: CanvasRenderingContext2D | null) => void,
+    onRestoredReset?: () => void,
   ): void {
     if (this.backend === 'webgl2') {
       const gl = this.tryGetWebGL2(canvas);
@@ -596,7 +611,8 @@ export class ApothecaryRenderer {
             () => {
               destroyGlBundle(gl, pipe.bundle);
               assignGl(null);
-              this.initSinglePassBackend(canvas, fragSource, assignGl, assign2d);
+              onRestoredReset?.();
+              this.initSinglePassBackend(canvas, fragSource, assignGl, assign2d, onRestoredReset);
             },
           );
           return;
@@ -617,6 +633,10 @@ export class ApothecaryRenderer {
       (ctx) => {
         this.decant2d = ctx;
       },
+      () => {
+        this.decantWarmed = false;
+        this.decantDirty = true;
+      },
     );
   }
 
@@ -630,11 +650,26 @@ export class ApothecaryRenderer {
       (ctx) => {
         this.window2d = ctx;
       },
+      () => {
+        this.windowWarmed = false;
+        this.windowDirty = true;
+      },
     );
   }
 
   getBackend(): 'webgl2' | 'canvas2d' {
     return this.backend;
+  }
+
+  /** Returns true only when attached to a live DOM and currently hidden via layout/CSS. */
+  private isCanvasHiddenInDom(canvas: HTMLCanvasElement): boolean {
+    return Boolean(canvas.isConnected) && (canvas.clientWidth <= 0 || canvas.clientHeight <= 0);
+  }
+
+  /** Renders at least 1 warm-up frame, skips live hidden canvases once warmed, and always renders detached canvases. */
+  private shouldRenderCanvas(canvas: HTMLCanvasElement, warmed: boolean): boolean {
+    if (!warmed) return true;
+    return !this.isCanvasHiddenInDom(canvas);
   }
 
   updateCauldronState(state: {
@@ -652,6 +687,7 @@ export class ApothecaryRenderer {
     this.marbling = clamp(finiteOr(state.marblingIndex, 0), 0, 1);
     this.layerCrispness = clamp(finiteOr(state.layerCrispness, 0.9), 0, 1);
     this.phRgb = sanitizeRgb(state.phRgb, [0.45, 0.25, 0.65]);
+    this.cauldronDirty = true;
   }
 
   setLadleMotion(nx: number, ny: number, vx: number, vy: number, omegaRadS: number): void {
@@ -659,11 +695,27 @@ export class ApothecaryRenderer {
     this.pointerVel = [clamp(finiteOr(vx, 0), -8, 8), clamp(finiteOr(vy, 0), -8, 8)];
     this.ladleOmega = clamp(finiteOr(omegaRadS, 0), -40, 40);
     this.lastMotionTimeSec = this.simTimeSec;
+    this.cauldronDirty = true;
   }
 
   triggerDropletRipple(nx: number, ny: number): void {
     this.rippleOrigin = [clamp(finiteOr(nx, 0.5), 0, 1), clamp(finiteOr(ny, 0.5), 0, 1)];
     this.ripplePhase = 0.002;
+    this.celebrationRippleActive = false;
+    this.cauldronDirty = true;
+  }
+
+  /** Triggers a centered golden caustic shock-ripple and ~1.2s shimmer glow across cauldron & decant views. */
+  triggerCelebrationBurst(intensity = 1.0): void {
+    const safeIntensity = clamp(finiteOr(intensity, 1.0), 0, 2.0);
+    if (safeIntensity <= 0) return;
+    this.rippleOrigin = [0.5, 0.5];
+    this.ripplePhase = 0.002;
+    this.celebrationRippleActive = true;
+    this.burstGlow = Math.max(this.burstGlow, safeIntensity);
+    this.burstDecayRate = Math.max(1, this.burstGlow) / 1.2;
+    this.cauldronDirty = true;
+    this.decantDirty = true;
   }
 
   updateDecantView(opts: {
@@ -682,10 +734,12 @@ export class ApothecaryRenderer {
     this.waxPoured = Boolean(opts.waxPoured);
     this.waxStamped = Boolean(opts.waxStamped);
     this.decantLayers = packLayerVisuals(opts.layers);
+    this.decantDirty = true;
   }
 
   updateWeather(regime: MarketRegime): void {
     this.marketRegime = regime ?? 'calm';
+    this.windowDirty = true;
   }
 
   start(): void {
@@ -726,7 +780,12 @@ export class ApothecaryRenderer {
       this.ripplePhase += dt * 1.15;
       if (this.ripplePhase >= 1) {
         this.ripplePhase = 0;
+        this.celebrationRippleActive = false;
       }
+    }
+
+    if (this.burstGlow > 0) {
+      this.burstGlow = Math.max(0, this.burstGlow - dt * this.burstDecayRate);
     }
 
     // Gently damp ladle/pointer inertia after input stops
@@ -739,26 +798,34 @@ export class ApothecaryRenderer {
     // Slowly shift sun angle for gentle shopfront lighting evolution
     this.sunAngle = 0.68 + Math.sin(this.simTimeSec * 0.04) * 0.14;
 
-    if (this.cauldronGl && !this.cauldronGl.lost) {
-      this.renderCauldronWebGL2(this.cauldronGl);
-    } else {
-      this.renderCauldronCanvas2D();
+    if (this.shouldRenderCanvas(this.cauldronCanvas, this.cauldronWarmed)) {
+      if (this.cauldronGl && !this.cauldronGl.lost) {
+        this.renderCauldronWebGL2(this.cauldronGl);
+      } else {
+        this.renderCauldronCanvas2D();
+      }
+      this.cauldronWarmed = true;
+      this.cauldronDirty = false;
     }
 
-    if (this.decantCanvas) {
+    if (this.decantCanvas && this.shouldRenderCanvas(this.decantCanvas, this.decantWarmed)) {
       if (this.decantGl && !this.decantGl.lost) {
         this.renderDecantWebGL2(this.decantGl, this.decantCanvas);
       } else {
         this.renderDecantCanvas2D(this.decantCanvas);
       }
+      this.decantWarmed = true;
+      this.decantDirty = false;
     }
 
-    if (this.windowCanvas) {
+    if (this.windowCanvas && this.shouldRenderCanvas(this.windowCanvas, this.windowWarmed)) {
       if (this.windowGl && !this.windowGl.lost) {
         this.renderWindowWebGL2(this.windowGl, this.windowCanvas);
       } else {
         this.renderWindowCanvas2D(this.windowCanvas);
       }
+      this.windowWarmed = true;
+      this.windowDirty = false;
     }
   }
 
@@ -795,7 +862,7 @@ export class ApothecaryRenderer {
     set1f('u_temperature', this.temperatureNorm);
     set1f('u_marbling', this.marbling);
     set1f('u_layerCrispness', this.layerCrispness);
-    set1f('u_micaAmount', this.cauldronLayers.micaAmount);
+    set1f('u_micaAmount', clamp(this.cauldronLayers.micaAmount + this.burstGlow * 0.85, 0, 1));
     set2f('u_rippleOrigin', this.rippleOrigin[0], this.rippleOrigin[1]);
     set1f('u_ripplePhase', this.ripplePhase);
     set3f('u_phRgb', this.phRgb);
@@ -892,13 +959,32 @@ export class ApothecaryRenderer {
     set1f('u_waxPoured', this.waxPoured ? 1.0 : 0.0);
     set1f('u_layerCrispness', this.layerCrispness);
     set1f('u_marbling', this.marbling);
+    set1f('u_micaAmount', clamp(this.decantLayers.micaAmount + this.burstGlow * 0.85, 0, 1));
+    set1f('u_ripplePhase', this.celebrationRippleActive ? this.ripplePhase : 0);
+    const ripOrigLoc = getUniformLoc(gl, bundle, 'u_rippleOrigin');
+    if (ripOrigLoc) gl.uniform2f(ripOrigLoc, this.rippleOrigin[0], this.rippleOrigin[1]);
 
     const waxRgb = WAX_COLOR_RGB[this.waxColor] ?? WAX_COLOR_RGB.crimson;
     const waxLoc = getUniformLoc(gl, bundle, 'u_waxColor');
     if (waxLoc) gl.uniform3f(waxLoc, waxRgb[0], waxRgb[1], waxRgb[2]);
 
+    let decantColors = this.decantLayers.colorsFlat;
+    if (this.burstGlow > 0.001) {
+      const boost = clamp(this.burstGlow * 0.35, 0, 0.45);
+      for (let i = 0; i < 4; i++) {
+        const base = i * 3;
+        const r = this.decantLayers.colorsFlat[base];
+        const g = this.decantLayers.colorsFlat[base + 1];
+        const b = this.decantLayers.colorsFlat[base + 2];
+        this.burstColorsScratch[base] = clamp(r + (1.0 - r) * boost, 0, 1);
+        this.burstColorsScratch[base + 1] = clamp(g + (0.88 - g) * boost, 0, 1);
+        this.burstColorsScratch[base + 2] = clamp(b + (0.42 - b) * boost * 0.65, 0, 1);
+      }
+      decantColors = this.burstColorsScratch;
+    }
+
     const colorsLoc = getUniformLoc(gl, bundle, 'u_layerColors[0]') ?? getUniformLoc(gl, bundle, 'u_layerColors');
-    if (colorsLoc) gl.uniform3fv(colorsLoc, this.decantLayers.colorsFlat);
+    if (colorsLoc) gl.uniform3fv(colorsLoc, decantColors);
     const densLoc = getUniformLoc(gl, bundle, 'u_layerDensities[0]') ?? getUniformLoc(gl, bundle, 'u_layerDensities');
     if (densLoc) gl.uniform1fv(densLoc, this.decantLayers.densitiesFlat);
 
@@ -966,6 +1052,10 @@ export class ApothecaryRenderer {
     ctx.arc(cx, cy, rimRadius, 0, Math.PI * 2);
     ctx.fill();
 
+    const burst = clamp(this.burstGlow, 0, 1.5);
+    const swirlPhase = this.simTimeSec * (0.45 + this.ladleOmega * 0.25);
+    const effectiveMica = clamp(this.cauldronLayers.micaAmount + burst * 0.85, 0, 1);
+
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, liquidRadius, 0, Math.PI * 2);
@@ -984,7 +1074,6 @@ export class ApothecaryRenderer {
       ctx.fillRect(cx - liquidRadius, cy - liquidRadius, liquidRadius * 2, liquidRadius * 2);
 
       let accumY = 0;
-      const swirlPhase = this.simTimeSec * (0.45 + this.ladleOmega * 0.25);
       for (let i = 1; i < layers.length; i++) {
         accumY += layers[i - 1].volumeFraction;
         const horizonY = cy + liquidRadius * (0.68 - accumY * 1.36);
@@ -1029,21 +1118,11 @@ export class ApothecaryRenderer {
           ctx.stroke();
         }
       }
+    }
 
-      // Pearlescent mica & 24k gold-leaf flecks
-      if (this.cauldronLayers.micaAmount > 0.05) {
-        const fleckCount = Math.round(12 + this.cauldronLayers.micaAmount * 22);
-        ctx.fillStyle = 'rgba(255, 224, 118, 0.75)';
-        for (let f = 0; f < fleckCount; f++) {
-          const ang = f * 2.39996 + swirlPhase * 0.4;
-          const dist = liquidRadius * (0.14 + ((f * 0.618) % 0.76));
-          const fx = cx + Math.cos(ang) * dist;
-          const fy = cy + Math.sin(ang) * dist;
-          ctx.beginPath();
-          ctx.arc(fx, fy, 1.3 + (f % 3) * 0.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
+    // Pearlescent mica & 24k gold-leaf flecks
+    if (effectiveMica > 0.05) {
+      this.drawMicaFlecks(ctx, cx, cy, liquidRadius, effectiveMica, swirlPhase, burst);
     }
 
     // Hearth thermal convection glow
@@ -1054,6 +1133,9 @@ export class ApothecaryRenderer {
       ctx.fillStyle = ember;
       ctx.fillRect(cx - liquidRadius, cy - liquidRadius, liquidRadius * 2, liquidRadius * 2);
     }
+
+    // Celebration golden shimmer aura
+    this.drawBurstShimmerHalo(ctx, cx, cy, liquidRadius, burst);
 
     // Rising syrupy bubbles
     const bubbleCount = Math.round(3 + this.temperatureNorm * 10);
@@ -1070,31 +1152,103 @@ export class ApothecaryRenderer {
       ctx.stroke();
     }
 
-    // Concentric surface-tension droplet ripples
+    // Concentric surface-tension droplet & celebration shock ripples
     if (this.ripplePhase > 0) {
-      const rx = w * this.rippleOrigin[0];
-      const ry = h * this.rippleOrigin[1];
-      const alpha = Math.sin(this.ripplePhase * Math.PI) * 0.65;
-      for (let ring = 0; ring < 3; ring++) {
-        const ringR = Math.max(2, (this.ripplePhase * 0.85 - ring * 0.09) * liquidRadius);
-        if (ringR > 2) {
-          ctx.strokeStyle = `rgba(255, 248, 232, ${(alpha * (1 - ring * 0.25)).toFixed(3)})`;
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(rx, ry, ringR, 0, Math.PI * 2);
-          ctx.stroke();
-        }
-      }
+      this.drawRippleRings(
+        ctx,
+        w * this.rippleOrigin[0],
+        h * this.rippleOrigin[1],
+        liquidRadius,
+        this.ripplePhase,
+        this.celebrationRippleActive ? burst : 0,
+      );
     }
 
     // Meniscus specular crescent
-    ctx.strokeStyle = 'rgba(255, 245, 224, 0.32)';
-    ctx.lineWidth = 2.5;
+    const meniscusAlpha = clamp(0.32 + burst * 0.45, 0, 0.92);
+    ctx.strokeStyle =
+      burst > 0.01
+        ? `rgba(255, 240, 184, ${meniscusAlpha.toFixed(3)})`
+        : 'rgba(255, 245, 224, 0.32)';
+    ctx.lineWidth = 2.5 + burst * 1.4;
     ctx.beginPath();
     ctx.arc(cx, cy, liquidRadius - 3, Math.PI * 1.05, Math.PI * 1.65);
     ctx.stroke();
 
     ctx.restore();
+  }
+
+  /** Renders suspended pearlescent gold-leaf mica flecks inside a circular or clipped vessel region. */
+  private drawMicaFlecks(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    radius: number,
+    micaAmount: number,
+    swirlPhase: number,
+    burstGlow: number,
+  ): void {
+    const fleckCount = Math.round(12 + micaAmount * 22 + burstGlow * 14);
+    const alpha = clamp(0.75 + burstGlow * 0.22, 0, 0.98);
+    ctx.fillStyle = `rgba(255, 224, 118, ${alpha.toFixed(3)})`;
+    for (let f = 0; f < fleckCount; f++) {
+      const ang = f * 2.39996 + swirlPhase * 0.4;
+      const dist = radius * (0.14 + ((f * 0.618) % 0.76));
+      const fx = cx + Math.cos(ang) * dist;
+      const fy = cy + Math.sin(ang) * dist;
+      ctx.beginPath();
+      ctx.arc(fx, fy, 1.3 + (f % 3) * 0.5 + burstGlow * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /** Renders a decaying radial golden specular bloom during celebration bursts. */
+  private drawBurstShimmerHalo(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    radius: number,
+    burstGlow: number,
+  ): void {
+    if (burstGlow <= 0.01) return;
+    const norm = Math.min(burstGlow, 1.2);
+    const halo = ctx.createRadialGradient(cx, cy, radius * 0.05, cx, cy, radius);
+    halo.addColorStop(0, `rgba(255, 236, 152, ${(0.34 * norm).toFixed(3)})`);
+    halo.addColorStop(0.55, `rgba(255, 206, 92, ${(0.18 * norm).toFixed(3)})`);
+    halo.addColorStop(1, 'rgba(255, 206, 92, 0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /** Renders concentric surface-tension droplet or golden celebration shock-ripple rings. */
+  private drawRippleRings(
+    ctx: CanvasRenderingContext2D,
+    rx: number,
+    ry: number,
+    maxRadius: number,
+    ripplePhase: number,
+    goldenBurst: number,
+  ): void {
+    if (ripplePhase <= 0) return;
+    const isGolden = goldenBurst > 0.01;
+    const alpha = Math.sin(ripplePhase * Math.PI) * (isGolden ? 0.85 : 0.65);
+    const ringCount = isGolden ? 4 : 3;
+    const decayStep = isGolden ? 0.2 : 0.25;
+    ctx.lineWidth = isGolden ? 1.8 + Math.min(goldenBurst, 1.5) * 1.4 : 1.5;
+    for (let ring = 0; ring < ringCount; ring++) {
+      const ringR = Math.max(2, (ripplePhase * 0.85 - ring * 0.09) * maxRadius);
+      if (ringR > 2) {
+        const ringAlpha = clamp(alpha * (1 - ring * decayStep), 0, 1);
+        ctx.strokeStyle = isGolden
+          ? `rgba(255, 224, 118, ${ringAlpha.toFixed(3)})`
+          : `rgba(255, 248, 232, ${ringAlpha.toFixed(3)})`;
+        ctx.beginPath();
+        ctx.arc(rx, ry, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
   }
 
   private renderDecantCanvas2D(canvas: HTMLCanvasElement): void {
@@ -1108,6 +1262,7 @@ export class ApothecaryRenderer {
     const cx = w * 0.5;
     const cy = h * 0.56;
     const scale = Math.min(w, h) * 0.36;
+    const burst = clamp(this.burstGlow, 0, 1.5);
 
     // Sunlit walnut tabletop & alcove
     const wallGrad = ctx.createLinearGradient(0, 0, w, h);
@@ -1124,7 +1279,7 @@ export class ApothecaryRenderer {
     ctx.fillRect(0, tableY, w, h - tableY);
 
     // Animated RGB spectral dispersion rainbow caustics on walnut desk
-    const causticAlpha = 0.22 + this.pourProgress * 0.35;
+    const causticAlpha = clamp(0.22 + this.pourProgress * 0.35 + burst * 0.32, 0, 0.95);
     const cShift = Math.sin(this.simTimeSec * 1.6) * scale * 0.08;
     const cSpecs: Array<[number, string]> = [
       [-10, `rgba(255, 92, 64, ${causticAlpha.toFixed(3)})`],
@@ -1201,13 +1356,35 @@ export class ApothecaryRenderer {
         }
       }
     }
+
+    if (burst > 0.01) {
+      this.drawBurstShimmerHalo(ctx, cx, cy + scale * 0.08, scale * 0.78, burst);
+      const decantMica = clamp(this.decantLayers.micaAmount + burst * 0.85, 0, 1);
+      this.drawMicaFlecks(ctx, cx, cy + scale * 0.12, scale * 0.46, decantMica, this.simTimeSec * 0.55, burst);
+    }
     ctx.restore();
 
     // Vessel crystal outline & specular highlight
     traceVesselPath();
-    ctx.strokeStyle = 'rgba(224, 245, 255, 0.72)';
-    ctx.lineWidth = 2.5;
+    const outlineAlpha = clamp(0.72 + burst * 0.25, 0, 0.98);
+    ctx.strokeStyle =
+      burst > 0.01
+        ? `rgba(255, 242, 188, ${outlineAlpha.toFixed(3)})`
+        : 'rgba(224, 245, 255, 0.72)';
+    ctx.lineWidth = 2.5 + burst * 1.2;
     ctx.stroke();
+
+    // Celebration golden caustic shock-ripples around vessel
+    if (this.ripplePhase > 0 && this.celebrationRippleActive) {
+      this.drawRippleRings(
+        ctx,
+        w * this.rippleOrigin[0],
+        h * this.rippleOrigin[1],
+        scale * 0.95,
+        this.ripplePhase,
+        burst,
+      );
+    }
 
     // Tarnished brass funnel & laminar pour stream
     if (this.pourProgress > 0.01 && this.pourProgress < 0.97) {
@@ -1398,5 +1575,13 @@ export class ApothecaryRenderer {
     this.cauldron2d = null;
     this.decant2d = null;
     this.window2d = null;
+    this.cauldronWarmed = false;
+    this.decantWarmed = false;
+    this.windowWarmed = false;
+    this.cauldronDirty = false;
+    this.decantDirty = false;
+    this.windowDirty = false;
+    this.burstGlow = 0;
+    this.celebrationRippleActive = false;
   }
 }
