@@ -34,7 +34,7 @@ export class BrassScaleView {
 
     const svgNS = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(svgNS, 'svg');
-    svg.setAttribute('viewBox', '0 0 360 210');
+    svg.setAttribute('viewBox', '0 0 360 226');
     svg.setAttribute('class', 'brass-scale-svg');
     svg.setAttribute('aria-hidden', 'true');
 
@@ -164,7 +164,7 @@ export class BrassScaleView {
       this.pointerNeedle.setAttribute('stroke', scaleState.balanced ? '#7be3a6' : '#f1d287');
     }
 
-    const armHalf = 118;
+    const armHalf = 122;
     const pivotX = 180;
     const pivotY = 51;
     const leftX = pivotX - Math.cos(tiltRad) * armHalf;

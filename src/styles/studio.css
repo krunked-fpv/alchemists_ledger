@@ -31,6 +31,8 @@ body {
   margin: 0;
   padding: 0;
   min-height: 100dvh;
+  max-width: 100%;
+  overflow-x: clip;
   background:
     radial-gradient(circle at 20% 10%, rgba(164, 106, 48, 0.14), transparent 45%),
     repeating-linear-gradient(
@@ -53,12 +55,18 @@ select {
   color: inherit;
 }
 
+button {
+  touch-action: manipulation;
+}
+
 [hidden] {
   display: none !important;
 }
 
 .studio-shell {
   min-height: 100dvh;
+  max-width: 100%;
+  overflow-x: clip;
   display: flex;
   flex-direction: column;
 }
@@ -278,6 +286,7 @@ select {
 
 .brass-knob-range {
   width: 64px;
+  min-width: 44px;
   min-height: 44px;
   accent-color: var(--brass-bright);
   cursor: pointer;
@@ -291,6 +300,12 @@ select {
 
 .install-app-btn {
   border-color: #7ee2aa;
+}
+
+.install-dismiss-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
 }
 
 /* Wax-Seal Vault Drawer */
@@ -391,17 +406,25 @@ select {
 
 /* Main Stage & Station Panels */
 .studio-stage {
+  position: relative;
   flex: 1;
   width: 100%;
   max-width: 1480px;
   margin: 0 auto;
   padding: 1rem;
+  overflow-x: clip;
 }
 
 .station-panel {
+  position: relative;
   display: grid;
   gap: 1rem;
   align-items: start;
+}
+
+.station-panel > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .plaque-heading {
@@ -451,14 +474,15 @@ select {
 
 .reagent-jars-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(176px, 100%), 1fr));
   gap: 0.6rem;
 }
 
 .reagent-jar-btn {
+  position: relative;
   min-width: 44px;
   min-height: 62px;
-  padding: 0.5rem 0.65rem;
+  padding: 0.5rem 1.45rem 0.5rem 0.65rem;
   border-radius: 9px;
   border: 1px solid rgba(196, 152, 76, 0.4);
   background: linear-gradient(180deg, rgba(72, 45, 26, 0.85), rgba(34, 21, 13, 0.95));
@@ -467,6 +491,21 @@ select {
   gap: 0.6rem;
   text-align: left;
   cursor: pointer;
+}
+
+.reagent-jar-btn.has-distillate {
+  border-color: rgba(242, 204, 114, 0.72);
+}
+
+.jar-distillate-badge {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  color: #ffe38e;
+  font-size: 0.88rem;
+  line-height: 1;
+  text-shadow: 0 0 8px rgba(245, 198, 92, 0.85);
+  pointer-events: none;
 }
 
 .reagent-jar-btn.is-selected {
@@ -548,6 +587,8 @@ select {
 }
 
 .ritual-surface {
+  position: relative;
+  overflow: hidden;
   min-width: 44px;
   min-height: 76px;
   padding: 0.75rem 0.9rem;
@@ -656,6 +697,7 @@ select {
 }
 
 .hearth-ember-bed {
+  position: relative;
   width: 100%;
   max-width: 460px;
   min-height: 44px;
@@ -667,6 +709,13 @@ select {
   align-items: center;
   justify-content: center;
   gap: 0.65rem;
+}
+
+.ember-sparks-host {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
 }
 
 .ember-glow {
@@ -832,6 +881,7 @@ select {
 }
 
 .decant-canvas-col {
+  position: relative;
   border-radius: 14px;
   border: 2px solid var(--brass-mid);
   overflow: hidden;
@@ -1202,7 +1252,7 @@ select {
 
 .merchant-buy-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(170px, 100%), 1fr));
   gap: 0.45rem;
 }
 
@@ -1264,13 +1314,18 @@ select {
 
 .ledger-entry {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 0.5rem;
   align-items: baseline;
   padding: 0.25rem 0.4rem;
   border-radius: 4px;
   font-size: 0.82rem;
   color: var(--ink-sepia);
+}
+
+.ledger-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .ledger-day {
@@ -1354,7 +1409,7 @@ select {
 
 .cellar-apparatus-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(175px, 100%), 1fr));
   gap: 0.45rem;
 }
 
@@ -1379,8 +1434,10 @@ select {
 }
 
 .brass-select {
-  min-width: 140px;
+  min-width: 44px;
   min-height: 44px;
+  max-width: 100%;
+  flex: 1 1 140px;
   padding: 0.4rem 0.65rem;
   border-radius: 7px;
   border: 1px solid var(--brass-mid);
@@ -1402,10 +1459,805 @@ select {
   color: #cbb590;
 }
 
+.festival-seals-tally {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0.2rem;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(168, 122, 46, 0.55);
+  background: rgba(232, 196, 114, 0.22);
+  color: #4b2d12;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+/* Station Transition Juice & Wrought-Iron Cellar Trapdoor Veil */
+.station-panel.is-station-entering[data-transition-dir='right'] {
+  animation: stationSlideInRight 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.station-panel.is-station-entering[data-transition-dir='left'] {
+  animation: stationSlideInLeft 360ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.station-panel.is-station-entering[data-transition-dir='cellar-down'] {
+  animation: stationSlideInCellarDown 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.station-panel.is-station-entering[data-transition-dir='cellar-up'] {
+  animation: stationSlideInCellarUp 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.station-panel.is-station-entering::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 8;
+  border-radius: 10px;
+  background: linear-gradient(
+    108deg,
+    transparent 24%,
+    rgba(255, 224, 150, 0.14) 48%,
+    rgba(255, 246, 212, 0.24) 51%,
+    transparent 76%
+  );
+  animation: brassSpecularSweep 390ms ease-out forwards;
+}
+
+@keyframes stationSlideInRight {
+  0% {
+    opacity: 0.35;
+    transform: translate3d(28px, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes stationSlideInLeft {
+  0% {
+    opacity: 0.35;
+    transform: translate3d(-28px, 0, 0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes stationSlideInCellarDown {
+  0% {
+    opacity: 0.25;
+    transform: translate3d(0, -24px, 0) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes stationSlideInCellarUp {
+  0% {
+    opacity: 0.25;
+    transform: translate3d(0, 24px, 0) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes brassSpecularSweep {
+  0% {
+    opacity: 0.9;
+    transform: translate3d(-38%, 0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(38%, 0, 0);
+  }
+}
+
+.cellar-trapdoor-veil {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 45;
+  opacity: 0;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(22, 18, 22, 0.28) 0px,
+      rgba(22, 18, 22, 0.28) 2px,
+      transparent 2px,
+      transparent 44px
+    ),
+    radial-gradient(circle at 50% 45%, rgba(255, 178, 76, 0.08), rgba(10, 8, 12, 0.72) 78%);
+}
+
+.cellar-trapdoor-veil[data-trapdoor-dir='descent'].is-active {
+  animation: trapdoorDescentVeil 460ms ease-out forwards;
+}
+
+.cellar-trapdoor-veil[data-trapdoor-dir='ascent'].is-active {
+  animation: trapdoorAscentVeil 460ms ease-out forwards;
+}
+
+@keyframes trapdoorDescentVeil {
+  0% {
+    opacity: 0.85;
+    transform: translate3d(0, -10%, 0);
+  }
+  45% {
+    opacity: 0.65;
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 8%, 0);
+  }
+}
+
+@keyframes trapdoorAscentVeil {
+  0% {
+    opacity: 0.8;
+    transform: translate3d(0, 10%, 0);
+  }
+  45% {
+    opacity: 0.55;
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -8%, 0);
+  }
+}
+
+/* Tactile Ritual Micro-Juice */
+.mortar-surface.is-ritual-pulse {
+  animation: mortarPulse 380ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes mortarPulse {
+  0% {
+    transform: scale(0.96);
+    box-shadow: inset 0 0 0 0 rgba(255, 224, 140, 0.55), 0 0 0 0 rgba(232, 196, 114, 0.5);
+  }
+  50% {
+    transform: scale(1.015);
+    box-shadow: inset 0 0 22px 4px rgba(255, 224, 140, 0.28), 0 0 22px 4px rgba(232, 196, 114, 0.38);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: none;
+  }
+}
+
+.ritual-spark-burst {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.ritual-crystal-spark {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffffff 10%, var(--spark-color, #ffe388) 70%);
+  box-shadow: 0 0 8px var(--spark-color, #ffe388);
+  animation: crystalSparkFly 420ms var(--delay, 0ms) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes crystalSparkFly {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--dx, 16px), var(--dy, -16px), 0) scale(1.25);
+  }
+}
+
+.knife-surface.is-ritual-slash::after {
+  content: '';
+  position: absolute;
+  inset: -40%;
+  pointer-events: none;
+  background: linear-gradient(
+    135deg,
+    transparent 42%,
+    rgba(240, 250, 255, 0.78) 49%,
+    var(--slash-tint, #a6f0c0) 52%,
+    transparent 58%
+  );
+  animation: knifeSlashGlint 360ms ease-out forwards;
+}
+
+@keyframes knifeSlashGlint {
+  0% {
+    opacity: 0.95;
+    transform: translate3d(-45%, -25%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(45%, 25%, 0);
+  }
+}
+
+.pipette-surface.is-ritual-drop {
+  animation: pipettePulse 380ms ease-out;
+}
+
+@keyframes pipettePulse {
+  0% {
+    transform: scale(0.97);
+    border-color: var(--drop-tint, #9fe7ff);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.ritual-drop-burst {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.ritual-drop-ring {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  border: 2px solid var(--drop-tint, #9fe7ff);
+  animation: dropRingExpand 420ms ease-out forwards;
+}
+
+.ritual-drop-bead {
+  position: absolute;
+  width: 8px;
+  height: 11px;
+  margin: -12px 0 0 -4px;
+  border-radius: 50% 50% 50% 50% / 65% 65% 35% 35%;
+  background: var(--drop-tint, #9fe7ff);
+  box-shadow: 0 0 8px var(--drop-tint, #9fe7ff);
+  animation: dropBeadFall 400ms ease-in forwards;
+}
+
+@keyframes dropRingExpand {
+  0% {
+    opacity: 0.95;
+    transform: scale(0.4);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+@keyframes dropBeadFall {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, -6px, 0) scale(0.85);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 18px, 0) scale(1.1);
+  }
+}
+
+.hearth-ember-bed.is-ember-flaring {
+  animation: emberBedFlare 440ms ease-out;
+}
+
+@keyframes emberBedFlare {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 130, 42, 0.65);
+    border-color: #ff9c42;
+  }
+  45% {
+    box-shadow: 0 0 24px 6px rgba(255, 118, 32, 0.55);
+    border-color: #ffd06b;
+  }
+  100% {
+    box-shadow: none;
+  }
+}
+
+.ember-spark-mote {
+  position: absolute;
+  bottom: 8px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff3b8 0%, #ff7b24 75%);
+  box-shadow: 0 0 8px rgba(255, 144, 48, 0.9);
+  pointer-events: none;
+  animation: emberSparkRise 620ms var(--delay, 0ms) ease-out forwards;
+}
+
+@keyframes emberSparkRise {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--dx, 6px), var(--rise-y, -38px), 0) scale(0.3);
+  }
+}
+
+/* 3-Beat Decant Ceremony Micro-Juice */
+.ritual-step-btn.is-ceremony-beat,
+.brass-clasp.is-ceremony-beat {
+  animation: ceremonyBeatPop 340ms ease-out;
+}
+
+.ritual-step-btn.is-cork-pop,
+.decant-canvas-col.is-cork-beat {
+  animation: corkPopRecoil 400ms cubic-bezier(0.22, 1.4, 0.36, 1);
+}
+
+.ritual-step-btn.is-wax-pouring,
+.decant-canvas-col.is-wax-beat {
+  animation: waxMoltenGlow 460ms ease-out;
+}
+
+.ritual-step-btn.is-signet-impact,
+.decant-canvas-col.is-signet-beat {
+  animation: signetImpactStamp 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.decant-canvas-col.is-signet-beat::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  width: 68px;
+  height: 68px;
+  margin: -34px 0 0 -34px;
+  border-radius: 50%;
+  border: 3px solid #ffe285;
+  box-shadow: 0 0 20px rgba(255, 214, 102, 0.85);
+  pointer-events: none;
+  animation: signetRingShock 560ms ease-out forwards;
+}
+
+@keyframes ceremonyBeatPop {
+  0% {
+    transform: scale(0.96);
+  }
+  55% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes corkPopRecoil {
+  0% {
+    transform: translate3d(0, -4px, 0) scale(0.97);
+  }
+  45% {
+    transform: translate3d(0, 3px, 0) scale(1.02);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes waxMoltenGlow {
+  0% {
+    box-shadow: 0 0 0 0 var(--wax-accent, #dca938);
+  }
+  50% {
+    box-shadow: 0 0 24px 4px var(--wax-accent, #dca938);
+  }
+  100% {
+    box-shadow: none;
+  }
+}
+
+@keyframes signetImpactStamp {
+  0% {
+    transform: scale(1);
+  }
+  28% {
+    transform: scale(0.975);
+    box-shadow: 0 0 26px rgba(255, 224, 128, 0.65);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: none;
+  }
+}
+
+@keyframes signetRingShock {
+  0% {
+    opacity: 0.95;
+    transform: scale(0.45);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(3.1);
+  }
+}
+
+/* CelebrationDirector Ceremonial Overlay */
+.celebration-fx-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  overflow: hidden;
+}
+
+.celebration-particles-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.celebration-banner-slot {
+  position: absolute;
+  top: 4.5rem;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 1rem;
+  pointer-events: none;
+}
+
+.celebration-banner {
+  pointer-events: none;
+  max-width: min(92vw, 520px);
+  padding: 0.7rem 1.05rem;
+  border-radius: 10px;
+  border: 2px solid var(--brass-bright);
+  background:
+    radial-gradient(circle at 85% 18%, rgba(255, 250, 230, 0.72), transparent 55%),
+    linear-gradient(180deg, var(--parchment-light) 0%, var(--parchment-mid) 100%);
+  color: var(--ink-sepia);
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(130, 32, 32, 0.25);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  animation: celebrationBannerUnfurl 340ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.celebration-banner.is-exiting {
+  animation: celebrationBannerExit 260ms ease-in forwards;
+}
+
+.celebration-banner--dawn {
+  background:
+    radial-gradient(circle at 12% 50%, color-mix(in srgb, var(--regime-swatch, #d9a45b) 35%, transparent), transparent 60%),
+    linear-gradient(180deg, #271911 0%, #160e09 100%);
+  color: var(--parchment-light);
+  border-color: var(--regime-swatch, var(--brass-bright));
+}
+
+.celebration-banner-seal {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 32% 30%, #d43844, #7c131b);
+  border: 2px solid #f7d98b;
+  color: #fff2cc;
+  font-size: 1rem;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+}
+
+.celebration-banner-orb {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: radial-gradient(circle at 35% 30%, #fff6d4, var(--regime-swatch, #d9a45b));
+  border: 2px solid rgba(255, 240, 200, 0.8);
+  box-shadow: 0 0 14px var(--regime-swatch, #d9a45b);
+}
+
+.celebration-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.celebration-banner-eyebrow {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.78;
+}
+
+.celebration-banner-title {
+  font-size: 0.96rem;
+  line-height: 1.2;
+}
+
+.celebration-banner-sub {
+  font-size: 0.78rem;
+  color: #dbc59e;
+}
+
+.celebration-banner-reward {
+  margin-left: auto;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid #916420;
+  background: linear-gradient(180deg, #f3d27d, #c69135);
+  color: #1f1106;
+  font-weight: 700;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+@keyframes celebrationBannerUnfurl {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -18px, 0) scaleX(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scaleX(1);
+  }
+}
+
+@keyframes celebrationBannerExit {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -12px, 0);
+  }
+}
+
+.celebration-seal-burst {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.celebration-wax-shockwave {
+  position: absolute;
+  width: 64px;
+  height: 64px;
+  margin: -32px 0 0 -32px;
+  border-radius: 50%;
+  border: 3px solid #ffe48a;
+  box-shadow: 0 0 22px var(--wax-accent, #b5222c);
+  animation: waxShockwaveExpand 780ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.celebration-wax-medallion {
+  position: absolute;
+  width: 38px;
+  height: 38px;
+  margin: -19px 0 0 -19px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 30% 30%, #fff2c2 0%, var(--wax-accent, #b5222c) 65%);
+  border: 2px solid #f7d983;
+  color: #fff9e6;
+  font-size: 1rem;
+  animation: waxMedallionPop 680ms ease-out forwards;
+}
+
+.celebration-prism-mote {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  margin: -4px 0 0 -4px;
+  border-radius: 2px;
+  background: var(--mote-color, #ffe388);
+  box-shadow: 0 0 8px var(--mote-color, #ffe388);
+  animation: prismMoteBurst 900ms var(--delay, 0ms) cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes waxShockwaveExpand {
+  0% {
+    opacity: 0.95;
+    transform: scale(0.35);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.8);
+  }
+}
+
+@keyframes waxMedallionPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+
+@keyframes prismMoteBurst {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(0.7);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--dx, 40px), var(--dy, -40px), 0) rotate(var(--rot, 120deg)) scale(1.2);
+  }
+}
+
+.celebration-crown-coin {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 32% 28%, #fff2b2, #c8912d 75%);
+  border: 1.5px solid #f8df90;
+  color: #4b2d0a;
+  font-size: 0.65rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  animation: crownCoinArc 780ms var(--delay, 0ms) cubic-bezier(0.22, 0.85, 0.36, 1) forwards;
+}
+
+@keyframes crownCoinArc {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0) scale(0.7);
+  }
+  18% {
+    opacity: 1;
+    transform: translate3d(calc(var(--tx, 40px) * 0.25), var(--arc-lift, -56px), 0) scale(1.1);
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--tx, 40px), var(--ty, -120px), 0) scale(0.65);
+  }
+}
+
+.brass-tally-plaque.is-gilded-pulse {
+  animation: tallyGildedPulse 820ms ease-out;
+}
+
+@keyframes tallyGildedPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 218, 108, 0.75);
+    border-color: #ffe38e;
+  }
+  45% {
+    transform: scale(1.06);
+    box-shadow: 0 0 22px 6px rgba(255, 214, 92, 0.55);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: none;
+  }
+}
+
+.celebration-leaf-mote {
+  position: absolute;
+  width: 9px;
+  height: 5px;
+  border-radius: 999px 2px;
+  background: linear-gradient(90deg, #ffe792, #d49830);
+  box-shadow: 0 0 6px rgba(255, 224, 128, 0.65);
+  animation: leafMoteDrift 1150ms var(--delay, 0ms) ease-out forwards;
+}
+
+@keyframes leafMoteDrift {
+  0% {
+    opacity: 0.95;
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--dx, 24px), var(--dy, 64px), 0) rotate(220deg);
+  }
+}
+
+.celebration-cellar-flare {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.celebration-cellar-halo {
+  position: absolute;
+  width: 84px;
+  height: 84px;
+  margin: -42px 0 0 -42px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(126, 232, 174, 0.55), rgba(232, 196, 114, 0.25) 55%, transparent 72%);
+  animation: cellarFlarePulse 1100ms ease-out forwards;
+}
+
+.celebration-cellar-tag {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(132, 235, 178, 0.72);
+  background: rgba(16, 26, 22, 0.9);
+  color: #b7f7d0;
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+  animation: cellarTagFloat 1150ms ease-out forwards;
+}
+
+@keyframes cellarFlarePulse {
+  0% {
+    opacity: 0.95;
+    transform: scale(0.5);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.1);
+  }
+}
+
+@keyframes cellarTagFloat {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -35%);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -115%);
+  }
+}
+
+.is-cellar-harvest-glow,
+.is-reduced-seal-glow {
+  box-shadow: 0 0 0 2px rgba(126, 226, 170, 0.7), 0 0 18px rgba(232, 196, 114, 0.55);
+}
+
 /* Responsive Breakpoints */
 @media (max-width: 1120px) {
   .station-shopfront {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -1414,7 +2266,7 @@ select {
   .station-cauldron,
   .station-decant,
   .station-cellar {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .studio-stage {
@@ -1422,12 +2274,96 @@ select {
   }
 }
 
-@media (max-width: 540px) {
+@media (max-width: 768px) {
   .oak-brass-rail {
-    padding: 0.5rem 0.65rem;
+    position: static;
+    padding: 0.45rem 0.65rem;
+    gap: 0.4rem;
   }
 
+  .station-tabs {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+
+  .station-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .station-tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .rail-instruments {
+    width: 100%;
+    gap: 0.35rem;
+  }
+
+  .studio-stage {
+    padding: 0.65rem;
+  }
+
+  .cellar-canvas {
+    min-height: 240px;
+  }
+
+  .wax-slot-seal {
+    min-width: 44px;
+    flex: 1 1 150px;
+  }
+
+  .celebration-banner-slot {
+    top: 0.6rem;
+    padding: 0 0.5rem;
+  }
+
+  .celebration-banner {
+    max-width: calc(100vw - 1rem);
+    padding: 0.55rem 0.75rem;
+    gap: 0.55rem;
+  }
+}
+
+@media (max-width: 540px) {
   .scale-pan-readouts {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .stir-preset-buttons {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .station-panel.is-station-entering,
+  .station-panel.is-station-entering::after,
+  .cellar-trapdoor-veil.is-active,
+  .mortar-surface.is-ritual-pulse,
+  .knife-surface.is-ritual-slash::after,
+  .pipette-surface.is-ritual-drop,
+  .hearth-ember-bed.is-ember-flaring,
+  .ritual-step-btn.is-ceremony-beat,
+  .ritual-step-btn.is-cork-pop,
+  .ritual-step-btn.is-wax-pouring,
+  .ritual-step-btn.is-signet-impact,
+  .decant-canvas-col.is-cork-beat,
+  .decant-canvas-col.is-wax-beat,
+  .decant-canvas-col.is-signet-beat,
+  .decant-canvas-col.is-signet-beat::after,
+  .brass-tally-plaque.is-gilded-pulse,
+  .celebration-banner,
+  .celebration-banner.is-exiting {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .ledger-entry--wet {
+    animation: none !important;
   }
 }
