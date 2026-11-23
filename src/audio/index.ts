@@ -7,6 +7,12 @@ export type MarketRegime =
   | 'starfall_conclave';
 export type BrassWeightDenom = 50 | 25 | 10 | 5 | 1 | 0.5;
 export type PolyrhythmRatio = '3:4' | '4:5' | '5:6';
+export type CelebrationFanfareKind =
+  | 'seal_masterwork'
+  | 'bargain_struck'
+  | 'commission_fulfilled'
+  | 'dawn_chime'
+  | 'cellar_harvest';
 
 export type AudioPhysicsBusEvent =
   | { type: 'mortar_grind'; hardness: number; speed: number }
@@ -21,7 +27,9 @@ export type AudioPhysicsBusEvent =
   | { type: 'scale_weight_clink'; denom: BrassWeightDenom; momentum: number }
   | { type: 'quill_scratch'; intensity: number }
   | { type: 'cellar_drip'; midiNote: number; ratio: PolyrhythmRatio }
-  | { type: 'weather_ambience'; regime: MarketRegime };
+  | { type: 'weather_ambience'; regime: MarketRegime }
+  | { type: 'station_transition'; fromIndex: number; toIndex: number; toCellar: boolean }
+  | { type: 'celebration_fanfare'; kind: CelebrationFanfareKind; intensity?: number };
 
 export class AudioPhysicsBus {
   private readonly listeners = new Set<(event: AudioPhysicsBusEvent) => void>();
@@ -634,6 +642,26 @@ export class ProceduralAsmrAudioEngine {
     return passthrough;
   }
 
+  private createSweptPanner(
+    ctx: AudioContext,
+    startPan: number,
+    endPan: number,
+    startTime: number,
+    endTime: number,
+  ): AudioNode {
+    const safeStart = clampFinite(startPan, -1, 1, 0);
+    const safeEnd = clampFinite(endPan, -1, 1, 0);
+    if (typeof ctx.createStereoPanner === 'function') {
+      const panner = ctx.createStereoPanner();
+      setValueAt(panner.pan, safeStart, startTime);
+      linearRamp(panner.pan, safeEnd, endTime);
+      return panner;
+    }
+    const passthrough = ctx.createGain();
+    setParamValue(passthrough.gain, 1);
+    return passthrough;
+  }
+
   /**
    * Register transient nodes for deterministic cleanup on `onended` (with timer fallback)
    * so `getActiveNodeCount()` returns cleanly to baseline without leaking.
@@ -739,6 +767,12 @@ export class ProceduralAsmrAudioEngine {
         break;
       case 'weather_ambience':
         this.setWeatherRegime(event.regime);
+        break;
+      case 'station_transition':
+        this.playStationTransition(event.fromIndex, event.toIndex, event.toCellar);
+        break;
+      case 'celebration_fanfare':
+        this.playCelebrationFanfare(event.kind, event.intensity);
         break;
     }
   }
@@ -1033,27 +1067,27 @@ export class ProceduralAsmrAudioEngine {
     );
   }
 
-  private playGlassClink(vessel: PotionVessel, momentum: number): void {
-    const ctx = this.ctx!;
-    const now = ctx.currentTime;
-    const m = clampFinite(momentum, 0.05, 1.5, 0.7);
-    const profile = VESSEL_MODAL_PROFILES[vessel] ?? VESSEL_MODAL_PROFILES.prism;
-    const dur = profile.decaySec;
-
+  private appendFourModeModalBank(
+    ctx: AudioContext,
+    startTime: number,
+    profile: VesselModalProfile,
+    dur: number,
+    ampScale: number,
+    sources: AudioScheduledSourceNode[],
+    nodes: AudioNode[],
+    destination: AudioNode,
+  ): void {
     const strikerSrc = ctx.createBufferSource();
     strikerSrc.buffer = this.whiteNoiseBuffer;
+    strikerSrc.start(startTime);
+    strikerSrc.stop(startTime + 0.02);
+    sources.push(strikerSrc);
 
-    const sources: AudioScheduledSourceNode[] = [strikerSrc];
-    const nodes: AudioNode[] = [];
-
-    strikerSrc.start(now);
-    strikerSrc.stop(now + 0.02);
-
-    // 4-mode BiquadFilterNode borosilicate resonant modal bank
+    const now = ctx.currentTime;
     for (let i = 0; i < 4; i++) {
       const modeFreq = profile.fundamentalHz * profile.ratios[i];
       const modeDecay = dur * (1 - i * 0.16);
-      const modeAmp = profile.amps[i] * Math.min(1.2, m);
+      const modeAmp = profile.amps[i] * ampScale;
 
       const modalFilter = ctx.createBiquadFilter();
       modalFilter.type = 'bandpass';
@@ -1066,20 +1100,44 @@ export class ProceduralAsmrAudioEngine {
 
       const modeGain = ctx.createGain();
       setValueAt(modeGain.gain, 0.0001, now);
-      linearRamp(modeGain.gain, modeAmp, now + 0.003);
-      expRamp(modeGain.gain, 0.0001, now + modeDecay);
+      if (startTime > now) {
+        setValueAt(modeGain.gain, 0.0001, startTime);
+      }
+      linearRamp(modeGain.gain, modeAmp, startTime + 0.003);
+      expRamp(modeGain.gain, 0.0001, startTime + modeDecay);
 
       strikerSrc.connect(modalFilter);
       osc.connect(modalFilter);
       modalFilter.connect(modeGain);
-      modeGain.connect(this.masterGain!);
+      modeGain.connect(destination);
 
-      osc.start(now);
-      osc.stop(now + modeDecay + 0.01);
+      osc.start(startTime);
+      osc.stop(startTime + modeDecay + 0.01);
 
       sources.push(osc);
       nodes.push(modalFilter, modeGain);
     }
+  }
+
+  private playGlassClink(vessel: PotionVessel, momentum: number): void {
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+    const m = clampFinite(momentum, 0.05, 1.5, 0.7);
+    const profile = VESSEL_MODAL_PROFILES[vessel] ?? VESSEL_MODAL_PROFILES.prism;
+    const dur = profile.decaySec;
+
+    const sources: AudioScheduledSourceNode[] = [];
+    const nodes: AudioNode[] = [];
+    this.appendFourModeModalBank(
+      ctx,
+      now,
+      profile,
+      dur,
+      Math.min(1.2, m),
+      sources,
+      nodes,
+      this.masterGain!,
+    );
 
     this.registerVoice(sources, nodes, dur + 0.02);
   }
@@ -1376,17 +1434,23 @@ export class ProceduralAsmrAudioEngine {
     this.playKarplusLutePluck(note, regime, ((this.luteStep % 5) - 2) * 0.15);
   }
 
-  private playKarplusLutePluck(midiNote: number, regime: MarketRegime, panValue = 0): void {
-    if (!this.unlocked || !this.ctx || !this.masterGain || this.disposed) return;
-
-    const ctx = this.ctx;
+  private appendKarplusStringVoice(
+    ctx: AudioContext,
+    startTime: number,
+    opts: {
+      freqHz: number;
+      durationSec: number;
+      damping: number;
+      bodyCutoffHz: number;
+      panValue: number;
+      peakGain: number;
+    },
+    sources: AudioScheduledSourceNode[],
+    nodes: AudioNode[],
+  ): void {
     const now = ctx.currentTime;
-    const profile = REGIME_ACOUSTIC_PROFILES[regime] ?? REGIME_ACOUSTIC_PROFILES.calm;
-    const freqHz = midiToHz(midiNote);
-    const dur = 1.4;
     const sr = Number.isFinite(ctx.sampleRate) && ctx.sampleRate > 0 ? Math.round(ctx.sampleRate) : 44100;
-
-    const samples = synthesizeKarplusStrongBuffer(sr, freqHz, dur, profile.luteDamping);
+    const samples = synthesizeKarplusStrongBuffer(sr, opts.freqHz, opts.durationSec, opts.damping);
     const audioBuf = ctx.createBuffer(1, samples.length, sr);
     audioBuf.getChannelData(0).set(samples);
 
@@ -1395,24 +1459,626 @@ export class ProceduralAsmrAudioEngine {
 
     const bodyFilter = ctx.createBiquadFilter();
     bodyFilter.type = 'lowpass';
-    setParamValue(bodyFilter.frequency, profile.luteBodyCutoffHz);
+    setParamValue(bodyFilter.frequency, opts.bodyCutoffHz);
     setParamValue(bodyFilter.Q, 0.9);
 
-    const panner = this.createPanner(ctx, panValue);
+    const panner = this.createPanner(ctx, opts.panValue);
 
     const gain = ctx.createGain();
-    setValueAt(gain.gain, 0.16, now);
-    expRamp(gain.gain, 0.0001, now + dur);
+    if (startTime > now) {
+      setValueAt(gain.gain, 0.0001, now);
+    }
+    setValueAt(gain.gain, opts.peakGain, startTime);
+    expRamp(gain.gain, 0.0001, startTime + opts.durationSec);
 
     src.connect(bodyFilter);
     bodyFilter.connect(panner);
     panner.connect(gain);
-    gain.connect(this.masterGain);
+    gain.connect(this.masterGain!);
 
-    src.start(now);
-    src.stop(now + dur);
+    src.start(startTime);
+    src.stop(startTime + opts.durationSec);
 
-    this.registerVoice([src], [bodyFilter, panner, gain], dur);
+    sources.push(src);
+    nodes.push(bodyFilter, panner, gain);
+  }
+
+  private playKarplusLutePluck(midiNote: number, regime: MarketRegime, panValue = 0): void {
+    if (!this.unlocked || !this.ctx || !this.masterGain || this.disposed) return;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const profile = REGIME_ACOUSTIC_PROFILES[regime] ?? REGIME_ACOUSTIC_PROFILES.calm;
+    const dur = 1.4;
+    const sources: AudioScheduledSourceNode[] = [];
+    const nodes: AudioNode[] = [];
+
+    this.appendKarplusStringVoice(
+      ctx,
+      now,
+      {
+        freqHz: midiToHz(midiNote),
+        durationSec: dur,
+        damping: profile.luteDamping,
+        bodyCutoffHz: profile.luteBodyCutoffHz,
+        panValue,
+        peakGain: 0.16,
+      },
+      sources,
+      nodes,
+    );
+
+    this.registerVoice(sources, nodes, dur);
+  }
+
+  private playStationTransition(fromIndex: number, toIndex: number, toCellar: boolean): void {
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+    const safeFrom = clampFinite(fromIndex, -20, 20, 0);
+    const safeTo = clampFinite(toIndex, -20, 20, 0);
+    const delta = safeTo - safeFrom;
+    const dir = delta > 0 ? 1 : delta < 0 ? -1 : 0;
+    const span = clampFinite(0.35 + Math.min(4, Math.abs(delta)) * 0.1, 0.35, 0.75, 0.55);
+    const startPan = -dir * span;
+    const endPan = dir * span;
+
+    const slideDur = 0.19;
+    const totalDur = toCellar ? 0.48 : 0.21;
+    const sources: AudioScheduledSourceNode[] = [];
+    const nodes: AudioNode[] = [];
+
+    // Directional stereo sweep shared by brass clasp release and walnut workbench glide
+    const sweepPanner = this.createSweptPanner(ctx, startPan, endPan, now, now + slideDur);
+    sweepPanner.connect(this.masterGain!);
+    nodes.push(sweepPanner);
+
+    // Tactile brass clasp click
+    const claspNoise = ctx.createBufferSource();
+    claspNoise.buffer = this.whiteNoiseBuffer;
+    const claspFilter = ctx.createBiquadFilter();
+    claspFilter.type = 'bandpass';
+    setParamValue(claspFilter.frequency, 2850);
+    setParamValue(claspFilter.Q, 4.2);
+    const claspGain = ctx.createGain();
+    setValueAt(claspGain.gain, 0.0001, now);
+    linearRamp(claspGain.gain, 0.16, now + 0.002);
+    expRamp(claspGain.gain, 0.0001, now + 0.028);
+
+    claspNoise.connect(claspFilter);
+    claspFilter.connect(claspGain);
+    claspGain.connect(sweepPanner);
+    claspNoise.start(now);
+    claspNoise.stop(now + 0.032);
+    sources.push(claspNoise);
+    nodes.push(claspFilter, claspGain);
+
+    const claspRingFreqs: readonly [number, number] = [1520, 3080];
+    for (let i = 0; i < claspRingFreqs.length; i++) {
+      const osc = ctx.createOscillator();
+      osc.type = i === 0 ? 'triangle' : 'sine';
+      setParamValue(osc.frequency, claspRingFreqs[i]);
+      const ringGain = ctx.createGain();
+      setValueAt(ringGain.gain, 0.0001, now);
+      linearRamp(ringGain.gain, i === 0 ? 0.11 : 0.06, now + 0.002);
+      expRamp(ringGain.gain, 0.0001, now + 0.045);
+
+      osc.connect(ringGain);
+      ringGain.connect(sweepPanner);
+      osc.start(now);
+      osc.stop(now + 0.05);
+      sources.push(osc);
+      nodes.push(ringGain);
+    }
+
+    // Soft walnut slide whoosh
+    const slideSrc = ctx.createBufferSource();
+    slideSrc.buffer = this.pinkNoiseBuffer;
+    setParamValue(slideSrc.playbackRate, 0.92 + Math.min(0.28, Math.abs(delta) * 0.06));
+    const slideFilter = ctx.createBiquadFilter();
+    slideFilter.type = 'bandpass';
+    setValueAt(slideFilter.frequency, 480, now);
+    expRamp(slideFilter.frequency, 230, now + slideDur);
+    setParamValue(slideFilter.Q, 1.2);
+    const slideGain = ctx.createGain();
+    setValueAt(slideGain.gain, 0.0001, now);
+    linearRamp(slideGain.gain, 0.16, now + 0.035);
+    expRamp(slideGain.gain, 0.0001, now + slideDur);
+
+    slideSrc.connect(slideFilter);
+    slideFilter.connect(slideGain);
+    slideGain.connect(sweepPanner);
+    slideSrc.start(now);
+    slideSrc.stop(now + slideDur + 0.01);
+    sources.push(slideSrc);
+    nodes.push(slideFilter, slideGain);
+
+    if (toCellar) {
+      // Deep wrought-iron latch clunk
+      const latchTime = now + 0.035;
+      const ironNoise = ctx.createBufferSource();
+      ironNoise.buffer = this.whiteNoiseBuffer;
+      const ironBp = ctx.createBiquadFilter();
+      ironBp.type = 'bandpass';
+      setParamValue(ironBp.frequency, 340);
+      setParamValue(ironBp.Q, 3.0);
+      const ironNoiseGain = ctx.createGain();
+      setValueAt(ironNoiseGain.gain, 0.0001, now);
+      setValueAt(ironNoiseGain.gain, 0.0001, latchTime);
+      linearRamp(ironNoiseGain.gain, 0.18, latchTime + 0.004);
+      expRamp(ironNoiseGain.gain, 0.0001, latchTime + 0.055);
+
+      ironNoise.connect(ironBp);
+      ironBp.connect(ironNoiseGain);
+      ironNoiseGain.connect(this.masterGain!);
+      ironNoise.start(latchTime);
+      ironNoise.stop(latchTime + 0.06);
+      sources.push(ironNoise);
+      nodes.push(ironBp, ironNoiseGain);
+
+      const boltOsc = ctx.createOscillator();
+      boltOsc.type = 'triangle';
+      setValueAt(boltOsc.frequency, 155, latchTime);
+      expRamp(boltOsc.frequency, 62, latchTime + 0.095);
+
+      const clankOsc = ctx.createOscillator();
+      clankOsc.type = 'sine';
+      setValueAt(clankOsc.frequency, 390, latchTime);
+      expRamp(clankOsc.frequency, 210, latchTime + 0.075);
+
+      const boltLp = ctx.createBiquadFilter();
+      boltLp.type = 'lowpass';
+      setParamValue(boltLp.frequency, 520);
+
+      const boltGain = ctx.createGain();
+      setValueAt(boltGain.gain, 0.0001, now);
+      setValueAt(boltGain.gain, 0.0001, latchTime);
+      linearRamp(boltGain.gain, 0.24, latchTime + 0.005);
+      expRamp(boltGain.gain, 0.0001, latchTime + 0.12);
+
+      boltOsc.connect(boltLp);
+      clankOsc.connect(boltLp);
+      boltLp.connect(boltGain);
+      boltGain.connect(this.masterGain!);
+      boltOsc.start(latchTime);
+      boltOsc.stop(latchTime + 0.13);
+      clankOsc.start(latchTime);
+      clankOsc.stop(latchTime + 0.09);
+      sources.push(boltOsc, clankOsc);
+      nodes.push(boltLp, boltGain);
+
+      // Warm vaulted stone sub-resonance
+      const vaultTime = now + 0.055;
+      const subOsc = ctx.createOscillator();
+      subOsc.type = 'sine';
+      setValueAt(subOsc.frequency, 84, vaultTime);
+      expRamp(subOsc.frequency, 54, vaultTime + 0.36);
+
+      const subGain = ctx.createGain();
+      setValueAt(subGain.gain, 0.0001, now);
+      setValueAt(subGain.gain, 0.0001, vaultTime);
+      linearRamp(subGain.gain, 0.21, vaultTime + 0.045);
+      expRamp(subGain.gain, 0.0001, vaultTime + 0.4);
+
+      subOsc.connect(subGain);
+      subGain.connect(this.masterGain!);
+      subOsc.start(vaultTime);
+      subOsc.stop(vaultTime + 0.41);
+
+      const stoneAir = ctx.createBufferSource();
+      stoneAir.buffer = this.pinkNoiseBuffer;
+      const stoneLp = ctx.createBiquadFilter();
+      stoneLp.type = 'lowpass';
+      setParamValue(stoneLp.frequency, 165);
+      setParamValue(stoneLp.Q, 2.6);
+
+      const stoneGain = ctx.createGain();
+      setValueAt(stoneGain.gain, 0.0001, now);
+      setValueAt(stoneGain.gain, 0.0001, vaultTime);
+      linearRamp(stoneGain.gain, 0.12, vaultTime + 0.07);
+      expRamp(stoneGain.gain, 0.0001, vaultTime + 0.39);
+
+      stoneAir.connect(stoneLp);
+      stoneLp.connect(stoneGain);
+      stoneGain.connect(this.masterGain!);
+      stoneAir.start(vaultTime);
+      stoneAir.stop(vaultTime + 0.4);
+
+      sources.push(subOsc, stoneAir);
+      nodes.push(subGain, stoneLp, stoneGain);
+    }
+
+    this.registerVoice(sources, nodes, totalDur);
+  }
+
+  private playCelebrationFanfare(kind: CelebrationFanfareKind, intensity = 1): void {
+    const k = clampFinite(intensity, 0.2, 1.5, 1.0);
+    switch (kind) {
+      case 'seal_masterwork':
+        this.playSealMasterworkFanfare(k);
+        break;
+      case 'bargain_struck':
+        this.playBargainStruckFanfare(k);
+        break;
+      case 'commission_fulfilled':
+        this.playCommissionFulfilledFanfare(k);
+        break;
+      case 'dawn_chime':
+        this.playDawnChimeFanfare(k);
+        break;
+      case 'cellar_harvest':
+        this.playCellarHarvestFanfare(k);
+        break;
+      default:
+        this.playDawnChimeFanfare(k);
+        break;
+    }
+  }
+
+  private playSealMasterworkFanfare(k: number): void {
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+    const sources: AudioScheduledSourceNode[] = [];
+    const nodes: AudioNode[] = [];
+
+    // Crystalline 4-mode prism harmonic chime
+    const prismDur = 0.72;
+    this.appendFourModeModalBank(
+      ctx,
+      now,
+      VESSEL_MODAL_PROFILES.prism,
+      prismDur,
+      0.85 * Math.min(1.25, k),
+      sources,
+      nodes,
+      this.masterGain!,
+    );
+
+    // Warm Karplus-Strong fifth interval (D4 + A4)
+    const fifthDur = 1.35;
+    const fifthStrings: ReadonlyArray<{ midi: number; offset: number; pan: number; cutoff: number }> = [
+      { midi: 62, offset: 0.02, pan: -0.28, cutoff: 3000 },
+      { midi: 69, offset: 0.09, pan: 0.28, cutoff: 3300 },
+    ];
+    for (const s of fifthStrings) {
+      this.appendKarplusStringVoice(
+        ctx,
+        now + s.offset,
+        {
+          freqHz: midiToHz(s.midi),
+          durationSec: fifthDur,
+          damping: 0.9968,
+          bodyCutoffHz: s.cutoff,
+          panValue: s.pan,
+          peakGain: 0.17 * k,
+        },
+        sources,
+        nodes,
+      );
+    }
+
+    this.registerVoice(sources, nodes, 1.48);
+  }
+
+  private playBargainStruckFanfare(k: number): void {
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+    const sources: AudioScheduledSourceNode[] = [];
+    const nodes: AudioNode[] = [];
+
+    // Cascading stereo brass/gold Crown coin clink arpeggio
+    const coinOffsets = [0, 0.055, 0.11, 0.165, 0.22] as const;
+    const coinPans = [-0.65, -0.32, 0.0, 0.32, 0.65] as const;
+    const coinFreqs = [1380, 1640, 1880, 2160, 2480] as const;
+
+    const clinkNoise = ctx.createBufferSource();
+    clinkNoise.buffer = this.whiteNoiseBuffer;
+    const clinkFilter = ctx.createBiquadFilter();
+    clinkFilter.type = 'bandpass';
+    setParamValue(clinkFilter.frequency, 3400);
+    setParamValue(clinkFilter.Q, 2.2);
+    const clinkNoiseGain = ctx.createGain();
+    setValueAt(clinkNoiseGain.gain, 0.0001, now);
+    linearRamp(clinkNoiseGain.gain, 0.055 * k, now + 0.02);
+    expRamp(clinkNoiseGain.gain, 0.0001, now + 0.27);
+
+    clinkNoise.connect(clinkFilter);
+    clinkFilter.connect(clinkNoiseGain);
+    clinkNoiseGain.connect(this.masterGain!);
+    clinkNoise.start(now);
+    clinkNoise.stop(now + 0.28);
+    sources.push(clinkNoise);
+    nodes.push(clinkFilter, clinkNoiseGain);
+
+    for (let i = 0; i < coinFreqs.length; i++) {
+      const t = now + coinOffsets[i];
+      const baseHz = coinFreqs[i];
+      const coinDur = 0.18;
+      const panner = this.createPanner(ctx, coinPans[i]);
+      const coinGain = ctx.createGain();
+
+      setValueAt(coinGain.gain, 0.0001, now);
+      if (t > now) setValueAt(coinGain.gain, 0.0001, t);
+      linearRamp(coinGain.gain, 0.14 * k, t + 0.002);
+      expRamp(coinGain.gain, 0.0001, t + coinDur);
+
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      setParamValue(bp.frequency, baseHz * 1.35);
+      setParamValue(bp.Q, 3.5);
+
+      const osc1 = ctx.createOscillator();
+      osc1.type = 'triangle';
+      setParamValue(osc1.frequency, baseHz);
+
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sine';
+      setParamValue(osc2.frequency, baseHz * 2.76);
+
+      osc1.connect(bp);
+      osc2.connect(bp);
+      bp.connect(panner);
+      panner.connect(coinGain);
+      coinGain.connect(this.masterGain!);
+
+      osc1.start(t);
+      osc1.stop(t + coinDur + 0.01);
+      osc2.start(t);
+      osc2.stop(t + coinDur * 0.75);
+
+      sources.push(osc1, osc2);
+      nodes.push(bp, panner, coinGain);
+    }
+
+    // Settled brass bell chime
+    const bellStart = now + 0.27;
+    const bellDur = 0.86;
+    const bellPartials: ReadonlyArray<{ freq: number; amp: number; decay: number }> = [
+      { freq: 880, amp: 0.18 * k, decay: bellDur },
+      { freq: 1760, amp: 0.09 * k, decay: bellDur * 0.72 },
+      { freq: 2637, amp: 0.05 * k, decay: bellDur * 0.5 },
+    ];
+    const bellLp = ctx.createBiquadFilter();
+    bellLp.type = 'lowpass';
+    setParamValue(bellLp.frequency, 3200);
+    bellLp.connect(this.masterGain!);
+    nodes.push(bellLp);
+
+    for (const p of bellPartials) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      setParamValue(osc.frequency, p.freq);
+      const gain = ctx.createGain();
+      setValueAt(gain.gain, 0.0001, now);
+      setValueAt(gain.gain, 0.0001, bellStart);
+      linearRamp(gain.gain, p.amp, bellStart + 0.004);
+      expRamp(gain.gain, 0.0001, bellStart + p.decay);
+
+      osc.connect(gain);
+      gain.connect(bellLp);
+      osc.start(bellStart);
+      osc.stop(bellStart + p.decay + 0.01);
+      sources.push(osc);
+      nodes.push(gain);
+    }
+
+    this.registerVoice(sources, nodes, 1.18);
+  }
+
+  private playCommissionFulfilledFanfare(k: number): void {
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+    const sources: AudioScheduledSourceNode[] = [];
+    const nodes: AudioNode[] = [];
+
+    // Triumphant 4-voice D Lydian Karplus-Strong lute chord strum (D3, A3, F#4, G#4)
+    const strumNotes: ReadonlyArray<{ midi: number; offset: number; pan: number }> = [
+      { midi: 50, offset: 0.0, pan: -0.45 },
+      { midi: 57, offset: 0.045, pan: -0.15 },
+      { midi: 66, offset: 0.09, pan: 0.15 },
+      { midi: 68, offset: 0.135, pan: 0.45 },
+    ];
+    for (const voice of strumNotes) {
+      this.appendKarplusStringVoice(
+        ctx,
+        now + voice.offset,
+        {
+          freqHz: midiToHz(voice.midi),
+          durationSec: 1.45,
+          damping: 0.9972,
+          bodyCutoffHz: 3400,
+          panValue: voice.pan,
+          peakGain: 0.15 * k,
+        },
+        sources,
+        nodes,
+      );
+    }
+
+    // Glass-harmonica shimmer swell
+    const swellStart = now + 0.1;
+    const swellEnd = now + 1.65;
+    const shimmerFilter = ctx.createBiquadFilter();
+    shimmerFilter.type = 'bandpass';
+    setParamValue(shimmerFilter.frequency, 960);
+    setParamValue(shimmerFilter.Q, 2.4);
+
+    const shimmerGain = ctx.createGain();
+    setValueAt(shimmerGain.gain, 0.0001, now);
+    setValueAt(shimmerGain.gain, 0.0001, swellStart);
+    linearRamp(shimmerGain.gain, 0.14 * k, now + 0.56);
+    expRamp(shimmerGain.gain, 0.0001, swellEnd);
+
+    shimmerFilter.connect(shimmerGain);
+    shimmerGain.connect(this.masterGain!);
+    nodes.push(shimmerFilter, shimmerGain);
+
+    const harmonicaFreqs = [587.33, 880.0, 1108.73] as const;
+    for (const freq of harmonicaFreqs) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      setParamValue(osc.frequency, freq);
+      osc.connect(shimmerFilter);
+      osc.start(swellStart);
+      osc.stop(swellEnd + 0.01);
+      sources.push(osc);
+    }
+
+    this.registerVoice(sources, nodes, 1.7);
+  }
+
+  private playDawnChimeFanfare(k: number): void {
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+    const sources: AudioScheduledSourceNode[] = [];
+    const nodes: AudioNode[] = [];
+
+    // Felt mallet puff
+    const malletSrc = ctx.createBufferSource();
+    malletSrc.buffer = this.pinkNoiseBuffer;
+    const malletLp = ctx.createBiquadFilter();
+    malletLp.type = 'lowpass';
+    setParamValue(malletLp.frequency, 750);
+    const malletGain = ctx.createGain();
+    setValueAt(malletGain.gain, 0.0001, now);
+    linearRamp(malletGain.gain, 0.09 * k, now + 0.008);
+    expRamp(malletGain.gain, 0.0001, now + 0.045);
+
+    malletSrc.connect(malletLp);
+    malletLp.connect(malletGain);
+    malletGain.connect(this.masterGain!);
+    malletSrc.start(now);
+    malletSrc.stop(now + 0.05);
+    sources.push(malletSrc);
+    nodes.push(malletLp, malletGain);
+
+    // Warm bronze apothecary morning bell (G4 = 392 Hz cast-bronze partials)
+    const bellFundamental = 392;
+    const bronzePartials: ReadonlyArray<{ ratio: number; amp: number; decay: number; type: OscillatorType }> = [
+      { ratio: 1.0, amp: 0.22 * k, decay: 1.45, type: 'sine' },
+      { ratio: 2.0, amp: 0.14 * k, decay: 1.15, type: 'triangle' },
+      { ratio: 2.4, amp: 0.1 * k, decay: 0.9, type: 'sine' },
+      { ratio: 3.0, amp: 0.07 * k, decay: 0.65, type: 'sine' },
+    ];
+    const bronzeLp = ctx.createBiquadFilter();
+    bronzeLp.type = 'lowpass';
+    setParamValue(bronzeLp.frequency, 2400);
+    bronzeLp.connect(this.masterGain!);
+    nodes.push(bronzeLp);
+
+    for (const p of bronzePartials) {
+      const osc = ctx.createOscillator();
+      osc.type = p.type;
+      setParamValue(osc.frequency, bellFundamental * p.ratio);
+      const gain = ctx.createGain();
+      setValueAt(gain.gain, 0.0001, now);
+      linearRamp(gain.gain, p.amp, now + 0.006);
+      expRamp(gain.gain, 0.0001, now + p.decay);
+
+      osc.connect(gain);
+      gain.connect(bronzeLp);
+      osc.start(now);
+      osc.stop(now + p.decay + 0.01);
+      sources.push(osc);
+      nodes.push(gain);
+    }
+
+    // Soft airy overtone
+    const airSrc = ctx.createBufferSource();
+    airSrc.buffer = this.pinkNoiseBuffer;
+    const airBp = ctx.createBiquadFilter();
+    airBp.type = 'bandpass';
+    setParamValue(airBp.frequency, 784);
+    setParamValue(airBp.Q, 8.5);
+    const airGain = ctx.createGain();
+    setValueAt(airGain.gain, 0.0001, now);
+    linearRamp(airGain.gain, 0.075 * k, now + 0.24);
+    expRamp(airGain.gain, 0.0001, now + 1.35);
+
+    airSrc.connect(airBp);
+    airBp.connect(airGain);
+    airGain.connect(this.masterGain!);
+    airSrc.start(now);
+    airSrc.stop(now + 1.36);
+
+    const overtoneOsc = ctx.createOscillator();
+    overtoneOsc.type = 'sine';
+    setParamValue(overtoneOsc.frequency, 1176);
+    const overtoneGain = ctx.createGain();
+    setValueAt(overtoneGain.gain, 0.0001, now);
+    linearRamp(overtoneGain.gain, 0.04 * k, now + 0.22);
+    expRamp(overtoneGain.gain, 0.0001, now + 1.25);
+
+    overtoneOsc.connect(overtoneGain);
+    overtoneGain.connect(this.masterGain!);
+    overtoneOsc.start(now);
+    overtoneOsc.stop(now + 1.26);
+
+    sources.push(airSrc, overtoneOsc);
+    nodes.push(airBp, airGain, overtoneGain);
+
+    this.registerVoice(sources, nodes, 1.5);
+  }
+
+  private playCellarHarvestFanfare(k: number): void {
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+    const sources: AudioScheduledSourceNode[] = [];
+    const nodes: AudioNode[] = [];
+
+    // Delicate 3-note borosilicate condenser harmonic triad (D5, F5, A5)
+    const triadNotes: ReadonlyArray<{ midi: number; offset: number; pan: number }> = [
+      { midi: 74, offset: 0.0, pan: -0.4 },
+      { midi: 77, offset: 0.11, pan: 0.0 },
+      { midi: 81, offset: 0.22, pan: 0.4 },
+    ];
+    const noteDur = 0.62;
+    const modeRatios: readonly [number, number] = [1.0, 2.42];
+    const modeQs: readonly [number, number] = [32, 26];
+    const modeAmps: readonly [number, number] = [0.16, 0.07];
+
+    for (const note of triadNotes) {
+      const t = now + note.offset;
+      const baseHz = midiToHz(note.midi);
+      const panner = this.createPanner(ctx, note.pan);
+      panner.connect(this.masterGain!);
+      nodes.push(panner);
+
+      const tapSrc = ctx.createBufferSource();
+      tapSrc.buffer = this.whiteNoiseBuffer;
+      tapSrc.start(t);
+      tapSrc.stop(t + 0.02);
+      sources.push(tapSrc);
+
+      for (let m = 0; m < 2; m++) {
+        const modeFreq = baseHz * modeRatios[m];
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        setParamValue(bp.frequency, modeFreq);
+        setParamValue(bp.Q, modeQs[m]);
+
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        setParamValue(osc.frequency, modeFreq);
+
+        const gain = ctx.createGain();
+        setValueAt(gain.gain, 0.0001, now);
+        if (t > now) setValueAt(gain.gain, 0.0001, t);
+        linearRamp(gain.gain, modeAmps[m] * k, t + 0.004);
+        expRamp(gain.gain, 0.0001, t + noteDur * (m === 0 ? 1 : 0.72));
+
+        tapSrc.connect(bp);
+        osc.connect(bp);
+        bp.connect(gain);
+        gain.connect(panner);
+
+        osc.start(t);
+        osc.stop(t + noteDur + 0.01);
+        sources.push(osc);
+        nodes.push(bp, gain);
+      }
+    }
+
+    this.registerVoice(sources, nodes, 0.9);
   }
 
   private scheduleNextLuteNote(): void {
