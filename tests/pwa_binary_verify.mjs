@@ -36,6 +36,25 @@ const CANONICAL_ENVOYS = [
   'wandering_bard_peddler',
 ];
 
+const CANONICAL_REGIMES = new Set([
+  'calm',
+  'dragon_siege',
+  'bumper_harvest',
+  'glacial_snap',
+  'starfall_conclave',
+]);
+
+const CANONICAL_EFFECTS = new Set([
+  'fire_ward',
+  'burn_salve',
+  'hearth_tonic',
+  'galaxy_elixir',
+  'neutralizing_salve',
+  'soothing_draught',
+]);
+
+const EXPECTED_TIERS = ['apprentice', 'journeyman', 'grandmaster'];
+
 const failures = [];
 const passes = [];
 
@@ -218,7 +237,7 @@ function verifyFestivalsJson(relPath) {
   const absPath = resolveRoot(relPath);
   if (!fs.existsSync(absPath)) {
     recordFail(relPath, 'missing festivals.json');
-    return;
+    return null;
   }
 
   let data;
@@ -226,12 +245,24 @@ function verifyFestivalsJson(relPath) {
     data = JSON.parse(fs.readFileSync(absPath, 'utf8'));
   } catch (err) {
     recordFail(relPath, `invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
-    return;
+    return null;
   }
 
   const errs = [];
   if (data.schemaVersion !== 1) {
     errs.push(`schemaVersion=${String(data.schemaVersion)} (expected 1)`);
+  }
+  if (typeof data.isoYearWeek !== 'string' || !/^\d{4}-W\d{2}$/.test(data.isoYearWeek)) {
+    errs.push(`invalid isoYearWeek=${String(data.isoYearWeek)}`);
+  }
+  if (typeof data.festivalName !== 'string' || data.festivalName.trim().length === 0) {
+    errs.push('missing non-empty festivalName');
+  }
+  if (typeof data.loreNote !== 'string' || data.loreNote.trim().length === 0) {
+    errs.push('missing non-empty loreNote');
+  }
+  if (typeof data.regime !== 'string' || !CANONICAL_REGIMES.has(data.regime)) {
+    errs.push(`invalid regime=${String(data.regime)}`);
   }
 
   const mods = data.reagentElasticityModifiers;
@@ -244,7 +275,7 @@ function verifyFestivalsJson(relPath) {
     }
     for (const reagent of CANONICAL_REAGENTS) {
       const val = mods[reagent];
-      if (typeof val !== 'number' || !Number.isFinite(val) || val <= 0) {
+      if (typeof val !== 'number' || !Number.isFinite(val) || val < 0.5 || val > 2.5) {
         errs.push(`invalid modifier for ${reagent}: ${String(val)}`);
       }
     }
@@ -268,12 +299,98 @@ function verifyFestivalsJson(relPath) {
 
   if (!Array.isArray(data.commissions) || data.commissions.length !== 3) {
     errs.push(`expected 3 commissions, found ${Array.isArray(data.commissions) ? data.commissions.length : 'non-array'}`);
+  } else {
+    const seenIds = new Set();
+    const seenTitles = new Set();
+    for (let i = 0; i < data.commissions.length; i++) {
+      const comm = data.commissions[i];
+      if (!comm || typeof comm !== 'object') {
+        errs.push(`commissions[${i}] is not an object`);
+        continue;
+      }
+      if (comm.tier !== EXPECTED_TIERS[i]) {
+        errs.push(`commissions[${i}].tier=${String(comm.tier)} (expected ${EXPECTED_TIERS[i]})`);
+      }
+      if (typeof comm.id !== 'string' || comm.id.trim().length === 0) {
+        errs.push(`commissions[${i}] missing id`);
+      } else if (seenIds.has(comm.id)) {
+        errs.push(`duplicate commission id ${comm.id}`);
+      } else {
+        seenIds.add(comm.id);
+      }
+      if (typeof comm.title !== 'string' || comm.title.trim().length === 0) {
+        errs.push(`commissions[${i}] missing title`);
+      } else if (seenTitles.has(comm.title)) {
+        errs.push(`duplicate commission title ${comm.title}`);
+      } else {
+        seenTitles.add(comm.title);
+      }
+      if (!CANONICAL_EFFECTS.has(comm.requiredEffect)) {
+        errs.push(`commissions[${i}] invalid requiredEffect=${String(comm.requiredEffect)}`);
+      }
+      if (!Number.isInteger(comm.minLayers) || comm.minLayers < 1 || comm.minLayers > 4) {
+        errs.push(`commissions[${i}] invalid minLayers=${String(comm.minLayers)}`);
+      }
+      if (typeof comm.minLayerCrispness !== 'number' || comm.minLayerCrispness <= 0 || comm.minLayerCrispness > 1) {
+        errs.push(`commissions[${i}] invalid minLayerCrispness=${String(comm.minLayerCrispness)}`);
+      }
+      if (typeof comm.minPurity !== 'number' || comm.minPurity <= 0 || comm.minPurity > 1) {
+        errs.push(`commissions[${i}] invalid minPurity=${String(comm.minPurity)}`);
+      }
+      if (typeof comm.rewardCrowns !== 'number' || !Number.isFinite(comm.rewardCrowns) || comm.rewardCrowns <= 0) {
+        errs.push(`commissions[${i}] invalid rewardCrowns=${String(comm.rewardCrowns)}`);
+      }
+      if (comm.targetPh !== undefined) {
+        if (
+          !Array.isArray(comm.targetPh) ||
+          comm.targetPh.length !== 2 ||
+          typeof comm.targetPh[0] !== 'number' ||
+          typeof comm.targetPh[1] !== 'number' ||
+          comm.targetPh[0] < 1.5 ||
+          comm.targetPh[1] > 12.5 ||
+          comm.targetPh[0] >= comm.targetPh[1]
+        ) {
+          errs.push(`commissions[${i}] invalid targetPh=${JSON.stringify(comm.targetPh)}`);
+        }
+      }
+      if (comm.minPeakTempC !== undefined) {
+        if (typeof comm.minPeakTempC !== 'number' || comm.minPeakTempC < 15 || comm.minPeakTempC > 98) {
+          errs.push(`commissions[${i}] invalid minPeakTempC=${String(comm.minPeakTempC)}`);
+        }
+      }
+    }
   }
 
   if (errs.length > 0) {
     recordFail(relPath, errs.join('; '));
+    return null;
+  }
+  recordPass(`${relPath} (schemaVersion=1, ${data.isoYearWeek}, ${data.regime}, 12 reagents, 8 envoys, 3 valid commissions)`);
+  return data;
+}
+
+function verifyDistBundledAssets() {
+  const htmlPath = resolveRoot('dist/index.html');
+  if (!fs.existsSync(htmlPath)) return;
+  const html = fs.readFileSync(htmlPath, 'utf8');
+  const assetRefs = [...html.matchAll(/(?:src|href)=["'](\.\/assets\/[^"']+)["']/gi)].map((m) => m[1]);
+  if (assetRefs.length === 0) {
+    recordFail('dist/assets', 'dist/index.html references zero bundled ./assets/ files');
+    return;
+  }
+
+  const missing = [];
+  for (const ref of assetRefs) {
+    const cleanRel = ref.replace(/^\.\//, 'dist/');
+    const abs = resolveRoot(cleanRel);
+    if (!fs.existsSync(abs) || fs.statSync(abs).size === 0) {
+      missing.push(cleanRel);
+    }
+  }
+  if (missing.length > 0) {
+    recordFail('dist/assets', `missing or empty bundled assets: ${missing.join(', ')}`);
   } else {
-    recordPass(`${relPath} (schemaVersion=1, 12 reagent modifiers, 8 envoy weights, 3 commissions)`);
+    recordPass(`dist/assets (${assetRefs.length} bundled JS/CSS assets verified non-empty)`);
   }
 }
 
@@ -361,7 +478,7 @@ function main() {
   verifyManifest('public/manifest.json');
   verifyServiceWorker('public/sw.js');
   verifyHtmlEntry('index.html');
-  verifyFestivalsJson('public/data/festivals.json');
+  const publicFestivals = verifyFestivalsJson('public/data/festivals.json');
 
   const distDir = resolveRoot('dist');
   if (fs.existsSync(distDir)) {
@@ -370,7 +487,15 @@ function main() {
     verifyManifest('dist/manifest.json');
     verifyServiceWorker('dist/sw.js');
     verifyHtmlEntry('dist/index.html');
-    verifyFestivalsJson('dist/data/festivals.json');
+    verifyDistBundledAssets();
+    const distFestivals = verifyFestivalsJson('dist/data/festivals.json');
+    if (publicFestivals && distFestivals) {
+      if (JSON.stringify(publicFestivals) === JSON.stringify(distFestivals)) {
+        recordPass('dist/data/festivals.json (matches public/data/festivals.json)');
+      } else {
+        recordFail('dist/data/festivals.json', 'out of sync with public/data/festivals.json');
+      }
+    }
   }
 
   verifyRepoFootprint();
