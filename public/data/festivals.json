@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "isoYearWeek": "2026-W48",
+  "festivalName": "Silver-Frost Solstice Market",
+  "regime": "glacial_snap",
+  "loreNote": "Ice-rimmed barges lock along the wharf, turning saffron pollen and honeyed draughts into prized comfort. Warmed crucibles and disciplined temperature peaks command the guild premium.",
+  "reagentElasticityModifiers": {
+    "amber_honey_resin": 1.39,
+    "cinnabar_sulfur_ash": 1.19,
+    "bismuth_vitriol_salt": 1.1,
+    "glacial_alum_shard": 0.7,
+    "chalk_pearl_lime": 0.92,
+    "verdigris_moss_sap": 1.18,
+    "saffron_hearth_pollen": 1.49,
+    "cobalt_lotus_nectar": 1.1,
+    "moonveil_lichen_dew": 0.91,
+    "rose_madder_distillate": 1.35,
+    "auric_mica_suspension": 1.11,
+    "starlight_aether_oil": 1.14
+  },
+  "envoyBiasWeights": {
+    "singed_warden": 0.68,
+    "guild_loupe_connoisseur": 1.17,
+    "rain_soaked_herbalist": 0.91,
+    "frostbitten_courier": 2.18,
+    "starfall_astronomer": 1.18,
+    "iron_miner_factor": 1.42,
+    "court_chirurgeon": 1.46,
+    "wandering_bard_peddler": 1.08
+  },
+  "commissions": [
+    {
+      "id": "comm-2026-w48-apprentice",
+      "tier": "apprentice",
+      "title": "Courier Hearth Draught",
+      "description": "Warm saffron hearth pollen with rose madder distillate past 48 C without scorching the vessel.",
+      "requiredEffect": "hearth_tonic",
+      "minLayers": 2,
+      "minLayerCrispness": 0.58,
+      "minPurity": 0.68,
+      "rewardCrowns": 52,
+      "minPeakTempC": 48.0
+    },
+    {
+      "id": "comm-2026-w48-journeyman",
+      "tier": "journeyman",
+      "title": "Hearth-Ember Saffron Tonic",
+      "description": "Drive peak temperature above 64 C across three distinct horizons while keeping pH gentle.",
+      "requiredEffect": "hearth_tonic",
+      "minLayers": 3,
+      "minLayerCrispness": 0.74,
+      "minPurity": 0.79,
+      "rewardCrowns": 105,
+      "targetPh": [
+        5.5,
+        8.2
+      ],
+      "minPeakTempC": 64.0
+    },
+    {
+      "id": "comm-2026-w48-grandmaster",
+      "tier": "grandmaster",
+      "title": "Solstice Hearth-Core Reserve",
+      "description": "Marry four stratified layers past 70 C peak hearth temperature while preserving crisp viscosity horizons.",
+      "requiredEffect": "hearth_tonic",
+      "minLayers": 4,
+      "minLayerCrispness": 0.84,
+      "minPurity": 0.88,
+      "rewardCrowns": 201,
+      "targetPh": [
+        5.6,
+        8.2
+      ],
+      "minPeakTempC": 70.0
+    }
+  ]
+}
