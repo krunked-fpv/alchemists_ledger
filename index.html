@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#16100c" />
+    <meta
+      name="description"
+      content="Zero-HUD diegetic apothecary studio, Suminagashi fluid workshop, kinetic cellar, and market ledger."
+    />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+    <title>Alchemists Ledger — Apothecary Studio</title>
+  </head>
+  <body>
+    <div id="studio-root" class="studio-shell">
+      <main class="studio-boot-plaque" aria-live="polite">
+        <p class="boot-inscription">Unsealing the apothecary ledger&hellip;</p>
+      </main>
+    </div>
+    <script type="module" src="./src/main.ts"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('./sw.js', { scope: './' }).catch(() => {});
+        });
+      }
+    </script>
+  </body>
+</html>
