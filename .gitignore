@@ -1,0 +1,28 @@
+# OS & Editor
+.DS_Store
+Thumbs.db
+
+# Backup & Cookie artifacts
+*.bak
+*.cookie_bak
+*.tmp
+
+# Node & Build artifacts
+node_modules
+node_modules/
+dist
+dist/
+.vite
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Temporary & Worktree directories
+.tmp
+.tmp/
+.worktrees/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class

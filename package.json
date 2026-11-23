@@ -1,0 +1,22 @@
+{
+  "name": "alchemists-ledger",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero-HUD Diegetic ASMR Potion-Physics Shopkeeper, Kinetic Cellar STEM Studio, and Dynamic Market Roguelike PWA",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "verify:pwa": "node tests/pwa_binary_verify.mjs"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8"
+  }
+}
