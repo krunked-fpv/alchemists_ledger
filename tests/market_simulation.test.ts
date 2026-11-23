@@ -14,6 +14,9 @@ import {
 } from '../simulation/market_shocks';
 import {
   ALL_ENVOY_ARCHETYPES,
+  ARCHETYPE_EYE_TELLS,
+  ARCHETYPE_NAMES,
+  ARCHETYPE_POSTURE_TELLS,
   BrassBalanceScale,
   ENVOY_ARCHETYPES,
   generateEnvoyForPotion,
@@ -136,6 +139,43 @@ describe('Market Shocks & 5 Regime Multipliers', () => {
     expect(seen.size).toBe(5);
   });
 
+  it('prevents consecutive identical regimes across 30 days when prevRegime is passed', () => {
+    const seeds = ['2026-11-23', 'household-slot-1', 'solstice-seed'];
+
+    for (const seed of seeds) {
+      let prevRegime: MarketRegime | undefined;
+      const sequence: MarketRegime[] = [];
+
+      for (let day = 1; day <= 30; day++) {
+        const nextRegime = pickDailyMarketRegime(seed, day, prevRegime);
+        expect(ALL_MARKET_REGIMES).toContain(nextRegime);
+        if (prevRegime !== undefined) {
+          expect(nextRegime).not.toBe(prevRegime);
+        }
+        sequence.push(nextRegime);
+        prevRegime = nextRegime;
+      }
+
+      // Deterministic repeatability of the chained 30-day schedule
+      let replayPrev: MarketRegime | undefined;
+      for (let day = 1; day <= 30; day++) {
+        const replayed = pickDailyMarketRegime(seed, day, replayPrev);
+        expect(replayed).toBe(sequence[day - 1]);
+        replayPrev = replayed;
+      }
+
+      // Verify stepping away when prevRegime directly matches the unguarded candidate
+      for (let day = 1; day <= 10; day++) {
+        const unguarded = pickDailyMarketRegime(seed, day);
+        const stepped = pickDailyMarketRegime(seed, day, unguarded);
+        expect(stepped).not.toBe(unguarded);
+        expect(ALL_MARKET_REGIMES).toContain(stepped);
+      }
+
+      expect(new Set(sequence).size).toBe(5);
+    }
+  });
+
   it('computes cellar hedge yields exceeding raw liquidation and responsive to shocks', () => {
     const calmSnap = computeMarketSnapshot('calm', 1);
     expect(computeCellarHedgeYield('verdigris_moss_sap', 'calm', 0)).toBe(0);
@@ -241,8 +281,10 @@ describe('8 NPC Envoy Archetypes & Diegetic Tells', () => {
     expect(o1.patienceLeft).toBeGreaterThanOrEqual(1);
     expect(o1.patienceLeft).toBeLessThanOrEqual(4);
     expect(o1.maxWillingnessCrowns).toBeGreaterThan(o1.fairOfferCrowns);
-    expect(o1.postureTell).toBe(ENVOY_ARCHETYPES[o1.archetype].postureTell);
-    expect(o1.eyeTell).toBe(ENVOY_ARCHETYPES[o1.archetype].eyeTell);
+    expect(o1.postureTell.length).toBeGreaterThan(10);
+    expect(o1.eyeTell.length).toBeGreaterThan(10);
+    expect(ARCHETYPE_POSTURE_TELLS[o1.archetype]).toContain(o1.postureTell);
+    expect(ARCHETYPE_EYE_TELLS[o1.archetype]).toContain(o1.eyeTell);
 
     // Null-potion generation across seeds and regimes should reach all 8 archetypes
     const observed = new Set<string>();
@@ -257,6 +299,112 @@ describe('8 NPC Envoy Archetypes & Diegetic Tells', () => {
       }
     }
     expect(observed.size).toBe(8);
+  });
+
+  it('provides 64 unique envoy names and 32 posture + 32 eye tells across all 8 archetypes', () => {
+    const allNames: string[] = [];
+    const allPostureTells: string[] = [];
+    const allEyeTells: string[] = [];
+
+    for (const id of ALL_ENVOY_ARCHETYPES) {
+      const names = ARCHETYPE_NAMES[id];
+      const postureTells = ARCHETYPE_POSTURE_TELLS[id];
+      const eyeTells = ARCHETYPE_EYE_TELLS[id];
+
+      expect(names).toHaveLength(8);
+      expect(postureTells).toHaveLength(4);
+      expect(eyeTells).toHaveLength(4);
+      expect(postureTells).toContain(ENVOY_ARCHETYPES[id].postureTell);
+      expect(eyeTells).toContain(ENVOY_ARCHETYPES[id].eyeTell);
+
+      allNames.push(...names);
+      allPostureTells.push(...postureTells);
+      allEyeTells.push(...eyeTells);
+    }
+
+    expect(allNames).toHaveLength(64);
+    expect(new Set(allNames).size).toBe(64);
+    expect(allPostureTells).toHaveLength(32);
+    expect(new Set(allPostureTells).size).toBe(32);
+    expect(allEyeTells).toHaveLength(32);
+    expect(new Set(allEyeTells).size).toBe(32);
+  });
+
+  it('produces zero repeated envoy names inside any 12-visit window across 30 calls and varies tells', () => {
+    const scenarios: Array<{
+      label: string;
+      potion: MarketPotionInput | null;
+      snapshot: ReturnType<typeof computeMarketSnapshot>;
+    }> = [
+      {
+        label: 'open-shopfront-calm',
+        potion: null,
+        snapshot: computeMarketSnapshot('calm', 4),
+      },
+      {
+        label: 'constrained-fire-ward-siege',
+        potion: makeSamplePotion({ dominantEffect: 'fire_ward' }),
+        snapshot: computeMarketSnapshot('dragon_siege', 7),
+      },
+      {
+        label: 'galaxy-elixir-starfall',
+        potion: makeSamplePotion({ dominantEffect: 'galaxy_elixir' }),
+        snapshot: computeMarketSnapshot('starfall_conclave', 11),
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const recentWindow: string[] = [];
+      const allVisitedNames: string[] = [];
+      const seenPostureTells = new Set<string>();
+      const seenEyeTells = new Set<string>();
+
+      for (let visit = 0; visit < 30; visit++) {
+        const offer = generateEnvoyForPotion(
+          scenario.potion,
+          scenario.snapshot,
+          `${scenario.label}::visit-${visit}`,
+          recentWindow
+        );
+
+        expect(recentWindow).not.toContain(offer.name);
+        expect(ARCHETYPE_POSTURE_TELLS[offer.archetype]).toContain(offer.postureTell);
+        expect(ARCHETYPE_EYE_TELLS[offer.archetype]).toContain(offer.eyeTell);
+
+        allVisitedNames.push(offer.name);
+        seenPostureTells.add(offer.postureTell);
+        seenEyeTells.add(offer.eyeTell);
+
+        recentWindow.push(offer.name);
+        if (recentWindow.length > 12) {
+          recentWindow.shift();
+        }
+      }
+
+      // Check every sliding window of up to 12 visits
+      for (let start = 0; start < allVisitedNames.length; start++) {
+        const windowSlice = allVisitedNames.slice(start, start + 12);
+        expect(new Set(windowSlice).size).toBe(windowSlice.length);
+      }
+
+      expect(seenPostureTells.size).toBeGreaterThanOrEqual(4);
+      expect(seenEyeTells.size).toBeGreaterThanOrEqual(4);
+    }
+
+    // Also verify all 4 posture & 4 eye tells of a single archetype vary by seedStr
+    const siegeSnap = computeMarketSnapshot('dragon_siege', 1);
+    const firePotion = makeSamplePotion({ dominantEffect: 'fire_ward' });
+    const wardenPostures = new Set<string>();
+    const wardenEyes = new Set<string>();
+    for (let i = 0; i < 60; i++) {
+      const offer = generateEnvoyForPotion(firePotion, siegeSnap, `tell-var-${i}`);
+      if (offer.archetype === 'singed_warden') {
+        wardenPostures.add(offer.postureTell);
+        wardenEyes.add(offer.eyeTell);
+      }
+    }
+    expect(wardenPostures.size).toBe(4);
+    expect(wardenEyes.size).toBe(4);
   });
 });
 
