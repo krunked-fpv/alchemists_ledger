@@ -202,6 +202,7 @@ export interface CraftedPotion {
   - `getState(): CauldronFluidState`
   - `decantToPotion(vessel: PotionVessel, seal: WaxSealSpec, day: number, id?: string): CraftedPotion`
 - `evaluateCommission(potion: CraftedPotion, commission: FestivalCommissionSpec): { satisfied: boolean; bonusMultiplier: number; reason: string }`
+- `generateProceduralCommissions(opts: { regime: MarketRegime; day: number; completedIds: readonly string[]; seed: string; count?: number }): FestivalCommissionSpec[]`
 
 ---
 
@@ -249,6 +250,7 @@ export interface CauldronLayerVisual {
   - `updateCauldronState(state: { layers: CauldronLayerVisual[]; temperatureC: number; viscosity: number; marblingIndex: number; layerCrispness: number; phRgb: [number, number, number] }): void`
   - `setLadleMotion(nx: number, ny: number, vx: number, vy: number, omegaRadS: number): void`
   - `triggerDropletRipple(nx: number, ny: number): void`
+  - `triggerCelebrationBurst(intensity?: number): void`
   - `updateDecantView(opts: { vessel: PotionVessel; pourProgress: number; corked: boolean; waxColor: WaxSealSpec['color']; waxPoured: boolean; waxStamped: boolean; layers: CauldronLayerVisual[] }): void`
   - `updateWeather(regime: MarketRegime): void`
   - `start(): void`
@@ -326,7 +328,9 @@ export type AudioPhysicsBusEvent =
   | { type: 'scale_weight_clink'; denom: BrassWeightDenom; momentum: number }
   | { type: 'quill_scratch'; intensity: number }
   | { type: 'cellar_drip'; midiNote: number; ratio: PolyrhythmRatio }
-  | { type: 'weather_ambience'; regime: MarketRegime };
+  | { type: 'weather_ambience'; regime: MarketRegime }
+  | { type: 'station_transition'; fromIndex: number; toIndex: number; toCellar: boolean }
+  | { type: 'celebration_fanfare'; kind: 'seal_masterwork' | 'bargain_struck' | 'commission_fulfilled' | 'dawn_chime' | 'cellar_harvest'; intensity?: number };
 ```
 
 ### `src/audio/index.ts` Exported Surface
@@ -400,11 +404,11 @@ export interface LedgerEntry {
 ### `simulation/market_shocks.ts` Exported Surface
 - `computeMarketSnapshot(regime: MarketRegime, day: number, festivalModifiers?: Partial<Record<ReagentId, number>>): MarketSnapshot`
 - `computeCellarHedgeYield(baseReagentId: ReagentId, regime: MarketRegime, units: number): number`
-- `pickDailyMarketRegime(dateSeed: string, day: number): MarketRegime`
+- `pickDailyMarketRegime(dateSeed: string, day: number, prevRegime?: MarketRegime): MarketRegime`
 
 ### `simulation/npc_envoys.ts` Exported Surface
 - `ENVOY_ARCHETYPES: Record<EnvoyArchetypeId, { title: string; postureTell: string; eyeTell: string; preferredEffects: PotionEffectTag[]; priceElasticity: number; qualitySensitivity: number }>`
-- `generateEnvoyForPotion(potion: CraftedPotion | null, snapshot: MarketSnapshot, seedStr: string): EnvoyOffer`
+- `generateEnvoyForPotion(potion: CraftedPotion | null, snapshot: MarketSnapshot, seedStr: string, recentNames?: readonly string[]): EnvoyOffer`
 - `class BrassBalanceScale`:
   - `constructor(leftMassCrowns?: number)`
   - `setLeftMass(crowns: number): void`
