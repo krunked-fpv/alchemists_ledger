@@ -13,10 +13,17 @@ import {
   CauldronSimulator,
   REAGENT_CATALOG,
   evaluateCommission,
+  generateProceduralCommissions,
   type FestivalCommissionSpec,
   type GameMode,
+  type PotionEffectTag,
   type ReagentId,
 } from '../../src/alchemy/index';
+import {
+  ProceduralAsmrAudioEngine,
+  globalAudioBus,
+  type CelebrationFanfareKind,
+} from '../../src/audio/index';
 import {
   CellarAutomationEngine,
   DORIAN_LYDIAN_MIDI_NOTES,
@@ -26,10 +33,18 @@ import {
 import {
   ALL_MARKET_REGIMES,
   computeMarketSnapshot,
+  pickDailyMarketRegime,
   type MarketRegime,
   type MarketSnapshot,
 } from '../../simulation/market_shocks';
-import { BrassBalanceScale, type BrassWeightDenom } from '../../simulation/npc_envoys';
+import {
+  ARCHETYPE_EYE_TELLS,
+  ARCHETYPE_POSTURE_TELLS,
+  BrassBalanceScale,
+  generateEnvoyForPotion,
+  type BrassWeightDenom,
+  type MarketPotionInput,
+} from '../../simulation/npc_envoys';
 import { canSellBackRawReagent } from '../../simulation/haggling_matrix';
 import {
   COOKIE_MAX_BYTES,
@@ -938,6 +953,593 @@ describe('5. End-to-End Studio Commission & DOM Lifecycle Crucible', () => {
       expect(root.querySelector('[data-testid="reagent-jar-amber_honey_resin"]')).not.toBeNull();
     } finally {
       app.dispose();
+    }
+  });
+});
+
+interface MockCrucibleAudioParam {
+  value: number;
+  setValueAtTime: (value: number, time: number) => MockCrucibleAudioParam;
+  linearRampToValueAtTime: (value: number, time: number) => MockCrucibleAudioParam;
+  exponentialRampToValueAtTime: (value: number, time: number) => MockCrucibleAudioParam;
+  setTargetAtTime: (target: number, startTime: number, _tau: number) => MockCrucibleAudioParam;
+}
+
+interface MockCrucibleAudioNode {
+  disconnected: boolean;
+  connect: (dest: MockCrucibleAudioNode) => MockCrucibleAudioNode;
+  disconnect: () => void;
+}
+
+interface MockCrucibleSourceNode extends MockCrucibleAudioNode {
+  loop?: boolean;
+  started: boolean;
+  stopped: boolean;
+  onended: (() => void) | null;
+  start: (_when?: number) => void;
+  stop: (_when?: number) => void;
+}
+
+function createCrucibleAudioContext() {
+  const createdNodes: MockCrucibleAudioNode[] = [];
+  const transientSources: MockCrucibleSourceNode[] = [];
+
+  const makeParam = (initial = 0): MockCrucibleAudioParam => {
+    const param: MockCrucibleAudioParam = {
+      value: initial,
+      setValueAtTime(value: number, _time: number) {
+        if (!Number.isFinite(value)) throw new Error('Non-finite AudioParam setValueAtTime');
+        param.value = value;
+        return param;
+      },
+      linearRampToValueAtTime(value: number, _time: number) {
+        if (!Number.isFinite(value)) throw new Error('Non-finite AudioParam linearRamp');
+        return param;
+      },
+      exponentialRampToValueAtTime(value: number, _time: number) {
+        if (!Number.isFinite(value) || value <= 0) {
+          throw new Error(`Invalid exponentialRamp(${value})`);
+        }
+        return param;
+      },
+      setTargetAtTime(target: number) {
+        if (!Number.isFinite(target)) throw new Error('Non-finite AudioParam setTargetAtTime');
+        return param;
+      },
+    };
+    return param;
+  };
+
+  const makeNode = <T extends object>(extra: T): MockCrucibleAudioNode & T => {
+    const node = Object.assign(
+      {
+        disconnected: false,
+        connect(dest: MockCrucibleAudioNode) {
+          return dest;
+        },
+        disconnect() {
+          node.disconnected = true;
+        },
+      },
+      extra
+    );
+    createdNodes.push(node);
+    return node;
+  };
+
+  const destination: MockCrucibleAudioNode = {
+    disconnected: false,
+    connect(dest: MockCrucibleAudioNode) {
+      return dest;
+    },
+    disconnect() {
+      destination.disconnected = true;
+    },
+  };
+  const state = {
+    state: 'suspended' as AudioContextState,
+    currentTime: 1.0,
+    sampleRate: 44100,
+    destination,
+    closeCalls: 0,
+    async resume() {
+      state.state = 'running';
+    },
+    async close() {
+      state.closeCalls += 1;
+      state.state = 'closed';
+    },
+    createGain: () => makeNode({ gain: makeParam(1) }),
+    createDynamicsCompressor: () =>
+      makeNode({
+        threshold: makeParam(-24),
+        knee: makeParam(30),
+        ratio: makeParam(12),
+        attack: makeParam(0.003),
+        release: makeParam(0.25),
+      }),
+    createBiquadFilter: () =>
+      makeNode({
+        type: 'lowpass' as BiquadFilterType,
+        frequency: makeParam(350),
+        Q: makeParam(1),
+        gain: makeParam(0),
+      }),
+    createStereoPanner: () => makeNode({ pan: makeParam(0) }),
+    createOscillator: () => {
+      const osc = makeNode({
+        type: 'sine' as OscillatorType,
+        frequency: makeParam(440),
+        detune: makeParam(0),
+        started: false,
+        stopped: false,
+        onended: null as (() => void) | null,
+        start() {
+          osc.started = true;
+        },
+        stop() {
+          osc.stopped = true;
+        },
+      });
+      transientSources.push(osc);
+      return osc;
+    },
+    createBufferSource: () => {
+      const src = makeNode({
+        buffer: null as AudioBuffer | null,
+        loop: false,
+        playbackRate: makeParam(1),
+        started: false,
+        stopped: false,
+        onended: null as (() => void) | null,
+        start() {
+          src.started = true;
+        },
+        stop() {
+          src.stopped = true;
+        },
+      });
+      transientSources.push(src);
+      return src;
+    },
+    createBuffer: (numberOfChannels: number, length: number, sampleRate: number) => {
+      const channels = Array.from({ length: numberOfChannels }, () => new Float32Array(length));
+      return {
+        numberOfChannels,
+        length,
+        sampleRate,
+        duration: length / sampleRate,
+        getChannelData: (ch: number) => channels[ch],
+      };
+    },
+  };
+
+  return {
+    ctx: state as unknown as AudioContext,
+    getState: () => state.state,
+    getCloseCalls: () => state.closeCalls,
+    getAllNodes: () => createdNodes,
+    flushTransientEnded: () => {
+      let ended = 0;
+      for (const src of transientSources) {
+        if (!src.loop && src.started && src.onended) {
+          const cb = src.onended;
+          src.onended = null;
+          cb();
+          ended += 1;
+        }
+      }
+      return ended;
+    },
+  };
+}
+
+function solveCommissionInCrucible(comm: FestivalCommissionSpec): boolean {
+  const primariesByEffect: Record<PotionEffectTag, readonly ReagentId[]> = {
+    fire_ward: ['cinnabar_sulfur_ash', 'bismuth_vitriol_salt', 'saffron_hearth_pollen'],
+    burn_salve: ['glacial_alum_shard', 'verdigris_moss_sap', 'moonveil_lichen_dew', 'cinnabar_sulfur_ash'],
+    hearth_tonic: ['saffron_hearth_pollen', 'rose_madder_distillate', 'starlight_aether_oil'],
+    galaxy_elixir: ['cobalt_lotus_nectar', 'moonveil_lichen_dew', 'auric_mica_suspension', 'starlight_aether_oil'],
+    neutralizing_salve: ['bismuth_vitriol_salt', 'chalk_pearl_lime', 'glacial_alum_shard'],
+    soothing_draught: ['amber_honey_resin', 'verdigris_moss_sap', 'cobalt_lotus_nectar', 'rose_madder_distillate'],
+  };
+  const supportReagents: readonly ReagentId[] = [
+    'auric_mica_suspension',
+    'amber_honey_resin',
+    'chalk_pearl_lime',
+    'bismuth_vitriol_salt',
+    'glacial_alum_shard',
+    'starlight_aether_oil',
+    'rose_madder_distillate',
+    'cobalt_lotus_nectar',
+  ];
+
+  const primaries = primariesByEffect[comm.requiredEffect];
+  const candidates = [...new Set([...primaries, ...supportReagents])];
+  const [minPh, maxPh] = comm.targetPh ?? [1.5, 12.5];
+  const midPh = (minPh + maxPh) / 2;
+
+  const tryPair = (firstId: ReagentId, secondId: ReagentId): boolean => {
+    const sim = new CauldronSimulator('grandmaster');
+    const used = new Set<ReagentId>();
+    const dose = (id: ReagentId, ml: number) => {
+      sim.addReagent(id, REAGENT_CATALOG[id].preferredPrep, ml);
+      used.add(id);
+    };
+
+    dose(firstId, 25);
+    dose(secondId, 25);
+
+    while (sim.getState().layers.length < comm.minLayers) {
+      const curPh = sim.getState().ph;
+      let bestId: ReagentId | null = null;
+      let bestScore = Number.POSITIVE_INFINITY;
+      for (const cand of candidates) {
+        if (used.has(cand)) continue;
+        const spec = REAGENT_CATALOG[cand];
+        const score = Math.abs(curPh + spec.phShift * 0.7 - midPh) - (primaries.includes(cand) ? 1.2 : 0);
+        if (score < bestScore) {
+          bestScore = score;
+          bestId = cand;
+        }
+      }
+      if (!bestId) break;
+      dose(bestId, 20);
+    }
+
+    for (let step = 0; step < 6; step++) {
+      const st = sim.getState();
+      const phOk = st.ph >= minPh && st.ph <= maxPh;
+      const effOk = st.dominantEffect === comm.requiredEffect;
+      if (phOk && effOk) break;
+
+      if (!effOk) {
+        const boost =
+          primaries.find((id) =>
+            st.ph < minPh ? REAGENT_CATALOG[id].phShift >= 0 : REAGENT_CATALOG[id].phShift <= 0
+          ) ?? primaries[0];
+        dose(boost, 15);
+        continue;
+      }
+
+      const needHigherPh = st.ph < minPh;
+      const adjuster = needHigherPh
+        ? (primaries.find((id) => REAGENT_CATALOG[id].phShift > 0.3) ?? 'chalk_pearl_lime')
+        : (primaries.find((id) => REAGENT_CATALOG[id].phShift < -0.3) ?? 'bismuth_vitriol_salt');
+      dose(adjuster, 12);
+    }
+
+    const targetTemp = comm.minPeakTempC ?? 45;
+    for (let p = 0; p < 12; p++) {
+      const st = sim.getState();
+      if (st.temperatureC >= targetTemp) break;
+      sim.pumpBellows(Math.min(1.0, Math.max(0.25, (targetTemp - st.temperatureC + 2) / 12)));
+    }
+
+    const potion = sim.decantToPotion('carafe', { color: 'gold', crest: 'phoenix', stamped: true }, 1);
+    return evaluateCommission(potion, comm).satisfied;
+  };
+
+  for (let i = 0; i < primaries.length; i++) {
+    for (let j = i + 1; j < primaries.length; j++) {
+      if (tryPair(primaries[i], primaries[j])) return true;
+    }
+  }
+  return tryPair(primaries[0], 'chalk_pearl_lime') || tryPair(primaries[0], 'auric_mica_suspension');
+}
+
+describe('6. Sprint 2 Non-Repetition, Transition & Fanfare Crucible', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('produces zero consecutive identical regimes across 40 consecutive days in pickDailyMarketRegime', () => {
+    const seeds = ['2026-11-23', 'crucible-s2-alpha', 'dragon-week-99'];
+
+    for (const dateSeed of seeds) {
+      let prevRegime: MarketRegime = pickDailyMarketRegime(dateSeed, 0);
+      const observed = new Set<MarketRegime>([prevRegime]);
+
+      for (let day = 1; day <= 40; day++) {
+        const nextRegime = pickDailyMarketRegime(dateSeed, day, prevRegime);
+        expect(ALL_MARKET_REGIMES).toContain(nextRegime);
+        expect(nextRegime).not.toBe(prevRegime);
+        expect(pickDailyMarketRegime(dateSeed, day, prevRegime)).toBe(nextRegime);
+        observed.add(nextRegime);
+        prevRegime = nextRegime;
+      }
+
+      expect(observed.size).toBe(ALL_MARKET_REGIMES.length);
+    }
+
+    // Exhaustive check starting from every canonical regime for day 1..40
+    for (const initialRegime of ALL_MARKET_REGIMES) {
+      let prev: MarketRegime = initialRegime;
+      for (let day = 1; day <= 40; day++) {
+        const next = pickDailyMarketRegime('exhaustive-start-seed', day, prev);
+        expect(next).not.toBe(prev);
+        prev = next;
+      }
+    }
+  });
+
+  it('prevents duplicate envoy names inside any 12-visit window across 40 visits and varies tells', () => {
+    const basePotion: MarketPotionInput = {
+      vessel: 'prism',
+      purity: 0.9,
+      marblingIndex: 0.15,
+      layerCrispness: 0.88,
+      collectorBrilliance: 0.85,
+      dominantEffect: 'fire_ward',
+      baseValueCrowns: 75,
+      layers: [{ specificGravity: 1.5 }, { specificGravity: 1.1 }],
+      seal: { color: 'crimson', crest: 'phoenix', stamped: true },
+    };
+
+    const scenarios: Array<{
+      label: string;
+      potion: MarketPotionInput | null;
+      snapshot: MarketSnapshot;
+    }> = [
+      { label: 'open-shop', potion: null, snapshot: computeMarketSnapshot('calm', 1) },
+      { label: 'siege-ward', potion: basePotion, snapshot: computeMarketSnapshot('dragon_siege', 5) },
+      {
+        label: 'starfall-galaxy',
+        potion: { ...basePotion, dominantEffect: 'galaxy_elixir', vessel: 'carafe' },
+        snapshot: computeMarketSnapshot('starfall_conclave', 9),
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const recentNames: string[] = [];
+      const visitNames: string[] = [];
+      const seenPostures = new Set<string>();
+      const seenEyes = new Set<string>();
+
+      for (let visit = 1; visit <= 40; visit++) {
+        const offer = generateEnvoyForPotion(
+          scenario.potion,
+          scenario.snapshot,
+          `crucible-envoy-${scenario.label}-${visit}`,
+          recentNames
+        );
+
+        expect(recentNames).not.toContain(offer.name);
+        expect(offer.postureTell.trim().length).toBeGreaterThan(10);
+        expect(offer.eyeTell.trim().length).toBeGreaterThan(10);
+        expect(ARCHETYPE_POSTURE_TELLS[offer.archetype]).toContain(offer.postureTell);
+        expect(ARCHETYPE_EYE_TELLS[offer.archetype]).toContain(offer.eyeTell);
+
+        visitNames.push(offer.name);
+        seenPostures.add(offer.postureTell);
+        seenEyes.add(offer.eyeTell);
+
+        recentNames.push(offer.name);
+        if (recentNames.length > 12) {
+          recentNames.shift();
+        }
+      }
+
+      expect(visitNames).toHaveLength(40);
+      for (let start = 0; start < visitNames.length; start++) {
+        const windowSlice = visitNames.slice(start, start + 12);
+        expect(new Set(windowSlice).size).toBe(windowSlice.length);
+      }
+
+      expect(seenPostures.size).toBeGreaterThanOrEqual(4);
+      expect(seenEyes.size).toBeGreaterThanOrEqual(4);
+    }
+  });
+
+  it('generates 15 batches (45 commissions) with strictly unique ids/titles and verified solvability', () => {
+    const completedIds: string[] = [];
+    const collected: FestivalCommissionSpec[] = [];
+    const seenIds = new Set<string>();
+    const seenTitles = new Set<string>();
+
+    for (let batchIdx = 0; batchIdx < 15; batchIdx++) {
+      const regime = ALL_MARKET_REGIMES[batchIdx % ALL_MARKET_REGIMES.length];
+      const batch = generateProceduralCommissions({
+        regime,
+        day: batchIdx + 1,
+        completedIds,
+        seed: 'crucible-s2-commissions',
+        count: 3,
+      });
+
+      expect(batch).toHaveLength(3);
+      expect(batch.map((c) => c.tier)).toEqual(['apprentice', 'journeyman', 'grandmaster']);
+
+      for (const comm of batch) {
+        expect(seenIds.has(comm.id)).toBe(false);
+        expect(seenTitles.has(comm.title)).toBe(false);
+        expect(comm.minLayers).toBeGreaterThanOrEqual(2);
+        expect(comm.minLayers).toBeLessThanOrEqual(4);
+        expect(comm.minLayerCrispness).toBeLessThanOrEqual(0.9);
+        expect(comm.minPurity).toBeLessThanOrEqual(0.92);
+        if (comm.targetPh) {
+          expect(comm.targetPh[0]).toBeGreaterThanOrEqual(2.0);
+          expect(comm.targetPh[1]).toBeLessThanOrEqual(11.5);
+          expect(comm.targetPh[0]).toBeLessThan(comm.targetPh[1]);
+        }
+
+        seenIds.add(comm.id);
+        seenTitles.add(comm.title);
+        completedIds.push(comm.id);
+        collected.push(comm);
+      }
+    }
+
+    expect(collected).toHaveLength(45);
+    expect(seenIds.size).toBe(45);
+    expect(seenTitles.size).toBe(45);
+
+    const unsolvable = collected.filter((c) => !solveCommissionInCrucible(c));
+    expect(unsolvable).toEqual([]);
+  });
+
+  it('processes station_transition and all 5 celebration_fanfare kinds over globalAudioBus and disposes cleanly', async () => {
+    const mock = createCrucibleAudioContext();
+    const engine = new ProceduralAsmrAudioEngine(globalAudioBus, () => mock.ctx);
+    const fanfareKinds: CelebrationFanfareKind[] = [
+      'seal_masterwork',
+      'bargain_struck',
+      'commission_fulfilled',
+      'dawn_chime',
+      'cellar_harvest',
+    ];
+
+    try {
+      // Safe no-op before unlock
+      expect(() =>
+        globalAudioBus.emit({ type: 'station_transition', fromIndex: 0, toIndex: 2, toCellar: false })
+      ).not.toThrow();
+      expect(() =>
+        globalAudioBus.emit({ type: 'station_transition', fromIndex: 2, toIndex: 4, toCellar: true })
+      ).not.toThrow();
+      for (const kind of fanfareKinds) {
+        expect(() =>
+          globalAudioBus.emit({ type: 'celebration_fanfare', kind, intensity: 1.0 })
+        ).not.toThrow();
+      }
+      expect(engine.getActiveNodeCount()).toBe(0);
+
+      expect(await engine.unlock()).toBe(true);
+      const baseline = engine.getActiveNodeCount();
+      expect(baseline).toBeGreaterThan(0);
+
+      expect(() => {
+        globalAudioBus.emit({ type: 'station_transition', fromIndex: 0, toIndex: 2, toCellar: false });
+        globalAudioBus.emit({ type: 'station_transition', fromIndex: 3, toIndex: 1, toCellar: false });
+        globalAudioBus.emit({ type: 'station_transition', fromIndex: 1, toIndex: 4, toCellar: true });
+        globalAudioBus.emit({ type: 'station_transition', fromIndex: 4, toIndex: 0, toCellar: true });
+        for (const kind of fanfareKinds) {
+          globalAudioBus.emit({ type: 'celebration_fanfare', kind, intensity: 1.0 });
+        }
+        // Degenerate numeric inputs must stay finite and exception-free
+        globalAudioBus.emit({
+          type: 'station_transition',
+          fromIndex: Number.NaN,
+          toIndex: Number.POSITIVE_INFINITY,
+          toCellar: true,
+        });
+        globalAudioBus.emit({
+          type: 'celebration_fanfare',
+          kind: 'commission_fulfilled',
+          intensity: Number.NaN,
+        });
+      }).not.toThrow();
+
+      expect(engine.getActiveNodeCount()).toBeGreaterThan(baseline);
+      const flushed = mock.flushTransientEnded();
+      expect(flushed).toBeGreaterThan(0);
+      expect(engine.getActiveNodeCount()).toBe(baseline);
+
+      // Trigger one more voice before dispose to ensure dispose tears down active transients too
+      globalAudioBus.emit({ type: 'celebration_fanfare', kind: 'dawn_chime', intensity: 0.9 });
+      expect(engine.getActiveNodeCount()).toBeGreaterThan(baseline);
+    } finally {
+      engine.dispose();
+    }
+
+    expect(engine.getActiveNodeCount()).toBe(0);
+    expect(mock.getCloseCalls()).toBe(1);
+    expect(mock.getState()).toBe('closed');
+    expect(mock.getAllNodes().every((node) => node.disconnected)).toBe(true);
+
+    // Post-dispose emissions remain safe no-ops
+    expect(() =>
+      globalAudioBus.emit({ type: 'celebration_fanfare', kind: 'seal_masterwork', intensity: 1.0 })
+    ).not.toThrow();
+    expect(engine.getActiveNodeCount()).toBe(0);
+  });
+
+  it('exposes ApothecaryRenderer.triggerCelebrationBurst and runs safely in canvas2d and null-context stubs', () => {
+    expect(typeof ApothecaryRenderer.prototype.triggerCelebrationBurst).toBe('function');
+
+    const layers: CauldronLayerVisual[] = [
+      {
+        colorRgb: [0.85, 0.42, 0.16],
+        specificGravity: 1.48,
+        volumeFraction: 0.55,
+        micaIntensity: 0.35,
+        sharpness: 0.9,
+      },
+      {
+        colorRgb: [0.28, 0.34, 0.86],
+        specificGravity: 0.86,
+        volumeFraction: 0.45,
+        micaIntensity: 0.8,
+        sharpness: 0.88,
+      },
+    ];
+
+    // 1. Canvas2D stub fallback
+    spyCanvasGetContext2dOnly();
+    const cauldronCanvas = document.createElement('canvas');
+    const decantCanvas = document.createElement('canvas');
+    const windowCanvas = document.createElement('canvas');
+    const renderer2d = new ApothecaryRenderer({ cauldronCanvas, decantCanvas, windowCanvas });
+
+    try {
+      expect(renderer2d.getBackend()).toBe('canvas2d');
+      expect(typeof renderer2d.triggerCelebrationBurst).toBe('function');
+
+      renderer2d.updateCauldronState({
+        layers,
+        temperatureC: 68,
+        viscosity: 3.2,
+        marblingIndex: 0.25,
+        layerCrispness: 0.86,
+        phRgb: [0.46, 0.28, 0.72],
+      });
+      renderer2d.updateDecantView({
+        vessel: 'prism',
+        pourProgress: 1.0,
+        corked: true,
+        waxColor: 'gold',
+        waxPoured: true,
+        waxStamped: true,
+        layers,
+      });
+
+      renderer2d.renderFrame(16.67);
+      expect(() => {
+        renderer2d.triggerCelebrationBurst();
+        renderer2d.triggerCelebrationBurst(1.25);
+        renderer2d.triggerCelebrationBurst(0);
+        renderer2d.triggerCelebrationBurst(-2);
+        renderer2d.triggerCelebrationBurst(Number.NaN);
+        renderer2d.triggerCelebrationBurst(10);
+      }).not.toThrow();
+
+      for (let frame = 1; frame <= 30; frame++) {
+        renderer2d.renderFrame(16.67 + frame * 50);
+      }
+    } finally {
+      renderer2d.dispose();
+    }
+    expect(() => renderer2d.triggerCelebrationBurst(1.0)).not.toThrow();
+
+    // 2. Null-context stub fallback (neither WebGL2 nor Canvas2D available)
+    vi.restoreAllMocks();
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null);
+    const stubRenderer = new ApothecaryRenderer({
+      cauldronCanvas: document.createElement('canvas'),
+      decantCanvas: document.createElement('canvas'),
+      windowCanvas: document.createElement('canvas'),
+    });
+
+    try {
+      expect(stubRenderer.getBackend()).toBe('canvas2d');
+      expect(typeof stubRenderer.triggerCelebrationBurst).toBe('function');
+      expect(() => {
+        stubRenderer.triggerCelebrationBurst(1.0);
+        stubRenderer.renderFrame(16.67);
+        stubRenderer.renderFrame(200);
+      }).not.toThrow();
+    } finally {
+      stubRenderer.dispose();
     }
   });
 });
