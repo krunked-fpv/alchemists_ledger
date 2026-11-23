@@ -7,7 +7,7 @@ from the current UTC ISO year-week (e.g. ``2026-W48``) to write
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -15,6 +15,7 @@ import random
 from typing import Any
 
 SCHEMA_VERSION = 1
+ANCHOR_ISO_MONDAY = date.fromisocalendar(2020, 1, 1)
 
 CANONICAL_REAGENT_ORDER: tuple[str, ...] = (
     "amber_honey_resin",
@@ -72,6 +73,14 @@ REGIME_FESTIVALS: dict[str, list[tuple[str, str]]] = {
             "Ambergris & Parchment Fair",
             "Scribes, collectors, and wandering bards gather beneath clear stained glass to trade measured draughts. Even-tempered demand rewards careful preparation over haste.",
         ),
+        (
+            "Canal-Glass Guild Promenade",
+            "Barge lanterns drift gently past leaded-glass shopfronts as apothecaries trade clear density towers and balanced tinctures. Open shipping lanes keep every crystal and botanical tray evenly priced.",
+        ),
+        (
+            "Vellum & Brass Equilibrium Fair",
+            "Inspectors calibrate shopfront balance pans while collectors browse sunlit shelves for crisp multi-strata phials. Tranquil weather brings steady footfall and measured haggling across all tiers.",
+        ),
     ],
     "dragon_siege": [
         (
@@ -81,6 +90,14 @@ REGIME_FESTIVALS: dict[str, list[tuple[str, str]]] = {
         (
             "Cinder-Watch Conscription",
             "Smoke-stained couriers ride in from the basalt ridge seeking heat-tempered wards and cooling salves. Every crucible runs hot while Guild chirurgeons bid sharply for purity.",
+        ),
+        (
+            "Basalt Bastion Quenchers' Muster",
+            "Ember-scarred standard-bearers knock on oak counters for heat-shields and blistering salves before the night sortie. Sulfur-rich minerals command wartime coin while caravans hug the tunnel roads.",
+        ),
+        (
+            "Wyrm-Smoke Apothecary Levy",
+            "Ash drifts across the skylight as siege chirurgeons requisition high-temperature fire wards and cooling alum unguents. Steady nerves at the bellows win generous garrison bounties.",
         ),
     ],
     "bumper_harvest": [
@@ -92,6 +109,14 @@ REGIME_FESTIVALS: dict[str, list[tuple[str, str]]] = {
             "Rain-Wash Botanical Equinox",
             "Damp moss, lotus nectar, and rose petals spill from wicker hampers at bargain coin. Discerning buyers still pay handsomely for layered clarity over raw bulk.",
         ),
+        (
+            "Copper-Still Orchard Overflow",
+            "Sweet-smelling moss, pollen, and crushed petals heap the market stalls at half their winter toll. Savvy distillers turn cheap botanical abundance into disciplined, high-purity blends.",
+        ),
+        (
+            "Silver-Furrow Herbwright Gala",
+            "Wain-loads of dewy lichen and crimson madder roots roll past the canal lock after seven warm showers. Buyers shrug off common brews yet bid briskly for sharp, multi-horizon craft.",
+        ),
     ],
     "glacial_snap": [
         (
@@ -102,6 +127,14 @@ REGIME_FESTIVALS: dict[str, list[tuple[str, str]]] = {
             "Silver-Frost Solstice Market",
             "Ice-rimmed barges lock along the wharf, turning saffron pollen and honeyed draughts into prized comfort. Warmed crucibles and disciplined temperature peaks command the guild premium.",
         ),
+        (
+            "Hoarfrost Courier Relay",
+            "Icicles fringe the brass eaves as frost-rimed post riders crowd the hearth for warming saffron tonics and comforting draughts. Cold ambient cauldrons demand resolute bellows work to hit peak extraction.",
+        ),
+        (
+            "Frozen Lock & Amber Hearth-Week",
+            "Sledges glide over the white canal while merchants barter furiously for high-proof hearth infusions and soothing oils. Thickening resins reward clean gentle stirring below critical shear.",
+        ),
     ],
     "starfall_conclave": [
         (
@@ -111,6 +144,14 @@ REGIME_FESTIVALS: dict[str, list[tuple[str, str]]] = {
         (
             "Astral Meridian Exhibition",
             "Telescopes line the Guild roof while patrons inspect refracted indigo horizons through faceted crystal. Precision density stacking without turbid boil-over wins the Grandmaster purse.",
+        ),
+        (
+            "Meteor-Veil Collectors' Salon",
+            "Twin comet trails shimmer behind the skylight as loupe-toting patrons bid fiercely for suspended gold mica and indigo aether. Every stray fold or hazy meniscus draws immediate scrutiny.",
+        ),
+        (
+            "Orrery & Prism Twilight Soiree",
+            "Astronomers bring velvet-lined cases to inspect faceted decanters filled with stratified nebula oils. High-purity layering without thermal scorch unlocks top-tier patronage.",
         ),
     ],
 }
@@ -246,7 +287,7 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
         "calm": [
             {
                 "title": "Amber-Moss Soothing Measure",
-                "description": "Float verdigris moss sap above dense amber honey resin with two clean strata and gentle bellows warmth.",
+                "description": "Float verdigris moss sap above dense amber honey resin in a prism flask with two clean strata and gentle bellows warmth.",
                 "requiredEffect": "soothing_draught",
                 "minLayers": 2,
                 "minLayerCrispness": 0.58,
@@ -255,7 +296,7 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
             },
             {
                 "title": "Balanced Chalk Neutralizer",
-                "description": "Pair bismuth vitriol salt with chalk pearl lime to tame excess acidity across two distinct horizons.",
+                "description": "Pair bismuth vitriol salt with chalk pearl lime to tame excess acidity across two distinct specific-gravity horizons.",
                 "requiredEffect": "neutralizing_salve",
                 "minLayers": 2,
                 "minLayerCrispness": 0.56,
@@ -263,33 +304,134 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
                 "targetPh": [5.5, 8.5],
                 "rewardCrowns": 52,
             },
+            {
+                "title": "Canal-Breeze Hearth Draught",
+                "description": "Layer saffron hearth pollen over rose madder distillate in a teardrop phial, warming past 46 C with calm laminar stirring.",
+                "requiredEffect": "hearth_tonic",
+                "minLayers": 2,
+                "minLayerCrispness": 0.58,
+                "minPurity": 0.69,
+                "minPeakTempC": 46.0,
+                "rewardCrowns": 54,
+            },
+            {
+                "title": "Dusk-Lotus Prism Suspension",
+                "description": "Settle cobalt lotus nectar beneath starlight aether oil inside a faceted prism vessel without folding the meniscus.",
+                "requiredEffect": "galaxy_elixir",
+                "minLayers": 2,
+                "minLayerCrispness": 0.60,
+                "minPurity": 0.70,
+                "targetPh": [6.5, 9.2],
+                "rewardCrowns": 56,
+            },
         ],
         "dragon_siege": [
             {
                 "title": "Garrison Burn Unguent",
-                "description": "Combine glacial alum shard and verdigris moss sap to deliver a cool two-layer burn salve for rampart scouts.",
+                "description": "Combine glacial alum shard and verdigris moss sap to deliver a cool two-layer burn salve in a sturdy carafe for rampart scouts.",
                 "requiredEffect": "burn_salve",
                 "minLayers": 2,
                 "minLayerCrispness": 0.58,
                 "minPurity": 0.68,
                 "rewardCrowns": 54,
             },
+            {
+                "title": "Ember-Sentry Fire Ward",
+                "description": "Bind cinnabar sulfur ash beneath saffron hearth pollen and push peak heat past 50 C to temper a patrol-grade fire ward.",
+                "requiredEffect": "fire_ward",
+                "minLayers": 2,
+                "minLayerCrispness": 0.57,
+                "minPurity": 0.68,
+                "targetPh": [3.8, 7.2],
+                "minPeakTempC": 50.0,
+                "rewardCrowns": 58,
+            },
+            {
+                "title": "Ash-Trench Acid Neutralizer",
+                "description": "Buffer heavy bismuth vitriol salt with chalk pearl lime across two crisp strata so battlefield dressings stay near neutral pH.",
+                "requiredEffect": "neutralizing_salve",
+                "minLayers": 2,
+                "minLayerCrispness": 0.58,
+                "minPurity": 0.69,
+                "targetPh": [5.8, 8.2],
+                "rewardCrowns": 53,
+            },
+            {
+                "title": "Watchfire Soothing Honey-Draft",
+                "description": "Float soothing rose madder distillate above amber honey resin in a crescent flask to ease smoke-rasped throats.",
+                "requiredEffect": "soothing_draught",
+                "minLayers": 2,
+                "minLayerCrispness": 0.59,
+                "minPurity": 0.70,
+                "targetPh": [4.8, 7.6],
+                "rewardCrowns": 51,
+            },
         ],
         "bumper_harvest": [
             {
                 "title": "Orchard Dew Soothing Vial",
-                "description": "Suspend sliced botanicals over amber honey resin without muddying the interface.",
+                "description": "Suspend sliced verdigris moss sap over dense amber honey resin in a teardrop vial without muddying the boundary.",
                 "requiredEffect": "soothing_draught",
                 "minLayers": 2,
                 "minLayerCrispness": 0.60,
                 "minPurity": 0.70,
                 "rewardCrowns": 46,
             },
+            {
+                "title": "Fresh-Cut Alum Burn Poultice",
+                "description": "Stack crushed glacial alum shard beneath moonveil lichen dew for a crisp two-horizon cooling salve.",
+                "requiredEffect": "burn_salve",
+                "minLayers": 2,
+                "minLayerCrispness": 0.59,
+                "minPurity": 0.69,
+                "targetPh": [5.4, 8.6],
+                "rewardCrowns": 49,
+            },
+            {
+                "title": "Rain-Press Saffron Cordial",
+                "description": "Steep sliced saffron hearth pollen above amber honey resin past 45 C while guarding the density interface from excessive shear.",
+                "requiredEffect": "hearth_tonic",
+                "minLayers": 2,
+                "minLayerCrispness": 0.58,
+                "minPurity": 0.68,
+                "minPeakTempC": 45.0,
+                "rewardCrowns": 50,
+            },
+            {
+                "title": "Meadow-Lime Buffer Phial",
+                "description": "Balance verdigris moss sap against chalk pearl lime in a wide carafe, holding pH smoothly within the guild neutral band.",
+                "requiredEffect": "neutralizing_salve",
+                "minLayers": 2,
+                "minLayerCrispness": 0.60,
+                "minPurity": 0.70,
+                "targetPh": [6.0, 8.2],
+                "rewardCrowns": 52,
+            },
         ],
         "glacial_snap": [
             {
+                "title": "Rime-Gate Soothing Syrup",
+                "description": "Layer viscous amber honey resin below cobalt lotus nectar in a teardrop flask with gentle laminar turns to prevent shear blur.",
+                "requiredEffect": "soothing_draught",
+                "minLayers": 2,
+                "minLayerCrispness": 0.58,
+                "minPurity": 0.68,
+                "targetPh": [5.0, 7.8],
+                "rewardCrowns": 52,
+            },
+            {
+                "title": "Frostbite Alum Recovery Salve",
+                "description": "Suspend verdigris moss sap over ground glacial alum shard in a crescent bottle to calm frost-chapped skin.",
+                "requiredEffect": "burn_salve",
+                "minLayers": 2,
+                "minLayerCrispness": 0.59,
+                "minPurity": 0.69,
+                "targetPh": [5.4, 8.4],
+                "rewardCrowns": 53,
+            },
+            {
                 "title": "Courier Hearth Draught",
-                "description": "Warm saffron hearth pollen with rose madder distillate past 48 C without scorching the vessel.",
+                "description": "Warm saffron hearth pollen with rose madder distillate past 48 C without scorching the vessel, preserving two crisp thermal strata.",
                 "requiredEffect": "hearth_tonic",
                 "minLayers": 2,
                 "minLayerCrispness": 0.58,
@@ -297,16 +439,56 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
                 "minPeakTempC": 48.0,
                 "rewardCrowns": 54,
             },
+            {
+                "title": "Bellows-Primed Cinder Ward",
+                "description": "Ignite cinnabar sulfur ash under saffron hearth pollen past 52 C in a heavy carafe to warm frozen watch-posts.",
+                "requiredEffect": "fire_ward",
+                "minLayers": 2,
+                "minLayerCrispness": 0.57,
+                "minPurity": 0.68,
+                "minPeakTempC": 52.0,
+                "rewardCrowns": 57,
+            },
         ],
         "starfall_conclave": [
             {
                 "title": "First-Light Starlight Phial",
-                "description": "Layer cobalt lotus nectar beneath starlight aether oil to catch clear dusk refraction.",
+                "description": "Layer cobalt lotus nectar beneath starlight aether oil inside a faceted prism to catch clear dusk refraction.",
                 "requiredEffect": "galaxy_elixir",
                 "minLayers": 2,
                 "minLayerCrispness": 0.60,
                 "minPurity": 0.70,
                 "rewardCrowns": 56,
+            },
+            {
+                "title": "Twilight Lichen Soothing Flask",
+                "description": "Float cobalt lotus nectar cleanly over amber honey resin in a crescent decanter for late-night observatory guests.",
+                "requiredEffect": "soothing_draught",
+                "minLayers": 2,
+                "minLayerCrispness": 0.60,
+                "minPurity": 0.70,
+                "targetPh": [5.4, 8.0],
+                "rewardCrowns": 54,
+            },
+            {
+                "title": "Comet-Warmth Saffron Elixir",
+                "description": "Warm saffron hearth pollen below starlight aether oil past 46 C so roof astronomers stay steady in the night breeze.",
+                "requiredEffect": "hearth_tonic",
+                "minLayers": 2,
+                "minLayerCrispness": 0.59,
+                "minPurity": 0.69,
+                "minPeakTempC": 46.0,
+                "rewardCrowns": 55,
+            },
+            {
+                "title": "Astral Slate pH Calibrator",
+                "description": "Stabilize bismuth vitriol salt with chalk pearl lime across two crisp crystal horizons for optical glass-loupe testing.",
+                "requiredEffect": "neutralizing_salve",
+                "minLayers": 2,
+                "minLayerCrispness": 0.61,
+                "minPurity": 0.71,
+                "targetPh": [6.2, 8.0],
+                "rewardCrowns": 58,
             },
         ],
     },
@@ -314,7 +496,7 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
         "calm": [
             {
                 "title": "Guild Chirurgeon Neutralizing Triplet",
-                "description": "Stack three well-prepared layers centering pH between 6.0 and 8.0 for field dressing safety.",
+                "description": "Stack three well-prepared layers centering pH between 6.0 and 8.0 in a prism bottle for field dressing safety.",
                 "requiredEffect": "neutralizing_salve",
                 "minLayers": 3,
                 "minLayerCrispness": 0.74,
@@ -324,7 +506,7 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
             },
             {
                 "title": "Warm Saffron Hearth Infusion",
-                "description": "Hold three crisp botanical-resin strata while raising cauldron peak heat above 56 C.",
+                "description": "Hold three crisp botanical-resin strata while raising cauldron peak heat above 56 C with disciplined bellows control.",
                 "requiredEffect": "hearth_tonic",
                 "minLayers": 3,
                 "minLayerCrispness": 0.74,
@@ -332,11 +514,31 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
                 "minPeakTempC": 56.0,
                 "rewardCrowns": 98,
             },
+            {
+                "title": "Canal-Assay Cooling Burn Triplet",
+                "description": "Order glacial alum shard, verdigris moss sap, and moonveil lichen dew by descending specific gravity across three clear tiers.",
+                "requiredEffect": "burn_salve",
+                "minLayers": 3,
+                "minLayerCrispness": 0.75,
+                "minPurity": 0.79,
+                "targetPh": [5.6, 8.4],
+                "rewardCrowns": 95,
+            },
+            {
+                "title": "Velvet Honey & Rose Soothing Trio",
+                "description": "Suspend verdigris moss sap and rose madder distillate above amber honey resin in a teardrop vessel with minimal marbling.",
+                "requiredEffect": "soothing_draught",
+                "minLayers": 3,
+                "minLayerCrispness": 0.74,
+                "minPurity": 0.79,
+                "targetPh": [5.2, 7.6],
+                "rewardCrowns": 94,
+            },
         ],
         "dragon_siege": [
             {
                 "title": "Vanguard Fire-Ward Suspension",
-                "description": "Hold cinnabar sulfur ash, bismuth vitriol, and saffron pollen in three crisp layers above 62 C.",
+                "description": "Hold cinnabar sulfur ash, bismuth vitriol, and saffron pollen in three crisp layers above 62 C for front-line shieldbearers.",
                 "requiredEffect": "fire_ward",
                 "minLayers": 3,
                 "minLayerCrispness": 0.74,
@@ -344,11 +546,42 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
                 "minPeakTempC": 62.0,
                 "rewardCrowns": 108,
             },
+            {
+                "title": "Rampart Tri-Strata Burn Salve",
+                "description": "Stack cinnabar sulfur ash, glacial alum shard, and moonveil lichen dew so cooling botanicals crown the scorched mineral base.",
+                "requiredEffect": "burn_salve",
+                "minLayers": 3,
+                "minLayerCrispness": 0.75,
+                "minPurity": 0.79,
+                "targetPh": [5.0, 8.2],
+                "rewardCrowns": 104,
+            },
+            {
+                "title": "Siege-Sapper Ember Tonic",
+                "description": "Decant amber honey resin, saffron hearth pollen, and rose madder distillate into a crescent flask above 60 C peak temperature.",
+                "requiredEffect": "hearth_tonic",
+                "minLayers": 3,
+                "minLayerCrispness": 0.74,
+                "minPurity": 0.79,
+                "targetPh": [5.4, 8.0],
+                "minPeakTempC": 60.0,
+                "rewardCrowns": 102,
+            },
+            {
+                "title": "Trench-Buffer Tri-Horizon Salve",
+                "description": "Neutralize acidic bismuth vitriol salt with chalk pearl lime and glacial alum across three crisp horizons for burn-ward triage.",
+                "requiredEffect": "neutralizing_salve",
+                "minLayers": 3,
+                "minLayerCrispness": 0.75,
+                "minPurity": 0.80,
+                "targetPh": [6.1, 7.9],
+                "rewardCrowns": 100,
+            },
         ],
         "bumper_harvest": [
             {
                 "title": "Triple-Horizon Botanical Salve",
-                "description": "Refine fresh moss sap, lichen dew, and glacial alum into a pH-balanced burn salve of high clarity.",
+                "description": "Refine fresh moss sap, lichen dew, and glacial alum into a pH-balanced burn salve of high clarity inside a carafe.",
                 "requiredEffect": "burn_salve",
                 "minLayers": 3,
                 "minLayerCrispness": 0.75,
@@ -356,11 +589,74 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
                 "targetPh": [5.8, 8.4],
                 "rewardCrowns": 94,
             },
+            {
+                "title": "Harvest Tide Soothing Triplet",
+                "description": "Float sliced verdigris moss sap and pipette-dropped cobalt lotus nectar over raw amber honey resin with razor-sharp interfaces.",
+                "requiredEffect": "soothing_draught",
+                "minLayers": 3,
+                "minLayerCrispness": 0.75,
+                "minPurity": 0.80,
+                "targetPh": [5.4, 7.8],
+                "rewardCrowns": 92,
+            },
+            {
+                "title": "Dew-Refined Nebula Trio",
+                "description": "Stack cobalt lotus nectar, moonveil lichen dew, and starlight aether oil into three luminous botanical layers.",
+                "requiredEffect": "galaxy_elixir",
+                "minLayers": 3,
+                "minLayerCrispness": 0.76,
+                "minPurity": 0.80,
+                "targetPh": [6.4, 9.0],
+                "rewardCrowns": 104,
+            },
+            {
+                "title": "Orchard-Alkali Tri-Layer Buffer",
+                "description": "Pair chalk pearl lime, bismuth vitriol salt, and rose madder distillate in a prism vessel tuned tightly around neutral pH.",
+                "requiredEffect": "neutralizing_salve",
+                "minLayers": 3,
+                "minLayerCrispness": 0.74,
+                "minPurity": 0.79,
+                "targetPh": [6.2, 7.8],
+                "rewardCrowns": 96,
+            },
         ],
         "glacial_snap": [
             {
+                "title": "Ice-Lock Saffron-Honey Buffer",
+                "description": "Stabilize bismuth vitriol salt, glacial alum shard, and chalk pearl lime past 48 C so cold-stiffened reagents settle cleanly.",
+                "requiredEffect": "neutralizing_salve",
+                "minLayers": 3,
+                "minLayerCrispness": 0.74,
+                "minPurity": 0.79,
+                "targetPh": [6.0, 8.0],
+                "minPeakTempC": 48.0,
+                "rewardCrowns": 102,
+            },
+            {
+                "title": "Winter-Wharf Soothing Triplet",
+                "description": "Warm amber honey resin beneath verdigris moss sap and rose madder distillate past 50 C without triggering thermal shear.",
+                "requiredEffect": "soothing_draught",
+                "minLayers": 3,
+                "minLayerCrispness": 0.75,
+                "minPurity": 0.79,
+                "targetPh": [5.2, 7.8],
+                "minPeakTempC": 50.0,
+                "rewardCrowns": 98,
+            },
+            {
+                "title": "Aurora-Frost Tri-Layer Prism",
+                "description": "Suspend cobalt lotus nectar, auric mica, and starlight aether oil in a teardrop decanter gently warmed past 45 C.",
+                "requiredEffect": "galaxy_elixir",
+                "minLayers": 3,
+                "minLayerCrispness": 0.76,
+                "minPurity": 0.80,
+                "targetPh": [6.0, 8.8],
+                "minPeakTempC": 45.0,
+                "rewardCrowns": 108,
+            },
+            {
                 "title": "Hearth-Ember Saffron Tonic",
-                "description": "Drive peak temperature above 64 C across three distinct horizons while keeping pH gentle.",
+                "description": "Drive peak temperature above 64 C across three distinct specific-gravity horizons while keeping pH gentle for courier flasks.",
                 "requiredEffect": "hearth_tonic",
                 "minLayers": 3,
                 "minLayerCrispness": 0.74,
@@ -373,13 +669,44 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
         "starfall_conclave": [
             {
                 "title": "Three-Tier Astral Conclave Elixir",
-                "description": "Suspend cobalt lotus, moonveil dew, and auric mica in razor-crisp density tiers.",
+                "description": "Suspend cobalt lotus nectar, moonveil dew, and auric mica in razor-crisp density tiers inside a faceted prism.",
                 "requiredEffect": "galaxy_elixir",
                 "minLayers": 3,
                 "minLayerCrispness": 0.76,
                 "minPurity": 0.80,
                 "targetPh": [6.0, 8.8],
                 "rewardCrowns": 112,
+            },
+            {
+                "title": "Midnight Observatory Hearth Brew",
+                "description": "Layer saffron hearth pollen, rose madder distillate, and starlight aether oil above 58 C for roof-watch astronomers.",
+                "requiredEffect": "hearth_tonic",
+                "minLayers": 3,
+                "minLayerCrispness": 0.75,
+                "minPurity": 0.80,
+                "targetPh": [5.6, 8.2],
+                "minPeakTempC": 58.0,
+                "rewardCrowns": 108,
+            },
+            {
+                "title": "Meteor-Dust Cooling Unguent",
+                "description": "Combine ground glacial alum shard, verdigris moss sap, and moonveil lichen dew into three calm, clear strata.",
+                "requiredEffect": "burn_salve",
+                "minLayers": 3,
+                "minLayerCrispness": 0.74,
+                "minPurity": 0.79,
+                "targetPh": [5.8, 8.6],
+                "rewardCrowns": 102,
+            },
+            {
+                "title": "Loupe-Grade Neutral Triplet",
+                "description": "Calibrate bismuth vitriol salt, glacial alum shard, and chalk pearl lime to an exacting anthocyanin-violet neutral window.",
+                "requiredEffect": "neutralizing_salve",
+                "minLayers": 3,
+                "minLayerCrispness": 0.76,
+                "minPurity": 0.81,
+                "targetPh": [6.3, 7.7],
+                "rewardCrowns": 110,
             },
         ],
     },
@@ -396,6 +723,37 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
                 "minPeakTempC": 44.0,
                 "rewardCrowns": 185,
             },
+            {
+                "title": "Charter Sovereign Neutralizer",
+                "description": "Stack four precision crystal-and-botanical strata in a carafe, holding anthocyanin pH cleanly inside a tight neutral corridor.",
+                "requiredEffect": "neutralizing_salve",
+                "minLayers": 4,
+                "minLayerCrispness": 0.85,
+                "minPurity": 0.89,
+                "targetPh": [6.4, 7.8],
+                "rewardCrowns": 192,
+            },
+            {
+                "title": "Canal Masterwork Fire-Ward",
+                "description": "Balance cinnabar sulfur ash, bismuth vitriol, glacial alum, and saffron pollen past 64 C without breaching 98 C boil-over.",
+                "requiredEffect": "fire_ward",
+                "minLayers": 4,
+                "minLayerCrispness": 0.84,
+                "minPurity": 0.88,
+                "targetPh": [4.5, 7.6],
+                "minPeakTempC": 64.0,
+                "rewardCrowns": 196,
+            },
+            {
+                "title": "Four-Horizon Honeyed Quietude",
+                "description": "Decant amber honey resin, verdigris moss sap, cobalt lotus nectar, and rose madder distillate into four unmarbled tiers.",
+                "requiredEffect": "soothing_draught",
+                "minLayers": 4,
+                "minLayerCrispness": 0.84,
+                "minPurity": 0.88,
+                "targetPh": [5.2, 7.8],
+                "rewardCrowns": 188,
+            },
         ],
         "dragon_siege": [
             {
@@ -409,6 +767,39 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
                 "minPeakTempC": 68.0,
                 "rewardCrowns": 205,
             },
+            {
+                "title": "Citadel Four-Layer Burn Reserve",
+                "description": "Temper cinnabar sulfur ash with glacial alum shard, verdigris moss sap, and moonveil dew across four crisp density bands.",
+                "requiredEffect": "burn_salve",
+                "minLayers": 4,
+                "minLayerCrispness": 0.84,
+                "minPurity": 0.88,
+                "targetPh": [5.0, 8.0],
+                "minPeakTempC": 54.0,
+                "rewardCrowns": 198,
+            },
+            {
+                "title": "Iron-Watch High-Heat Hearth Crown",
+                "description": "Drive four stratified hearth layers above 72 C in a crescent decanter while guarding interfacial viscosity from thermal shear.",
+                "requiredEffect": "hearth_tonic",
+                "minLayers": 4,
+                "minLayerCrispness": 0.84,
+                "minPurity": 0.88,
+                "targetPh": [5.4, 8.0],
+                "minPeakTempC": 72.0,
+                "rewardCrowns": 208,
+            },
+            {
+                "title": "Siege-Prism Astral Deterrent",
+                "description": "Suspend cobalt lotus, moonveil dew, auric mica, and starlight oil above 52 C in a commanding war-council prism.",
+                "requiredEffect": "galaxy_elixir",
+                "minLayers": 4,
+                "minLayerCrispness": 0.85,
+                "minPurity": 0.89,
+                "targetPh": [6.2, 8.8],
+                "minPeakTempC": 52.0,
+                "rewardCrowns": 210,
+            },
         ],
         "bumper_harvest": [
             {
@@ -421,11 +812,52 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
                 "targetPh": [6.4, 7.8],
                 "rewardCrowns": 190,
             },
+            {
+                "title": "Four-Tier Orchard Honey Reserve",
+                "description": "Stack amber honey resin, verdigris moss sap, cobalt lotus nectar, and rose madder distillate in pristine laminar poise.",
+                "requiredEffect": "soothing_draught",
+                "minLayers": 4,
+                "minLayerCrispness": 0.85,
+                "minPurity": 0.89,
+                "targetPh": [5.2, 7.6],
+                "rewardCrowns": 186,
+            },
+            {
+                "title": "Silver-Rain Botanical Burn Crown",
+                "description": "Harmonize glacial alum shard, verdigris moss sap, moonveil dew, and auric mica into a four-layer restorative carafe.",
+                "requiredEffect": "burn_salve",
+                "minLayers": 4,
+                "minLayerCrispness": 0.85,
+                "minPurity": 0.88,
+                "targetPh": [5.5, 8.3],
+                "rewardCrowns": 194,
+            },
+            {
+                "title": "Equinox Four-Crown Galaxy Flask",
+                "description": "Float four pristine pipette-prepared botanical and mica tiers in descending density order for harvest festival judges.",
+                "requiredEffect": "galaxy_elixir",
+                "minLayers": 4,
+                "minLayerCrispness": 0.86,
+                "minPurity": 0.90,
+                "targetPh": [6.6, 9.0],
+                "rewardCrowns": 202,
+            },
         ],
         "glacial_snap": [
             {
+                "title": "Rime-Breaker Four-Layer Fire Ward",
+                "description": "Tame exothermic cinnabar sulfur ash alongside glacial alum and saffron pollen past 68 C in four unbroken strata.",
+                "requiredEffect": "fire_ward",
+                "minLayers": 4,
+                "minLayerCrispness": 0.84,
+                "minPurity": 0.88,
+                "targetPh": [4.4, 7.8],
+                "minPeakTempC": 68.0,
+                "rewardCrowns": 204,
+            },
+            {
                 "title": "Solstice Hearth-Core Reserve",
-                "description": "Marry four stratified layers past 70 C peak hearth temperature while preserving crisp viscosity horizons.",
+                "description": "Marry four stratified layers past 70 C peak hearth temperature while preserving crisp viscosity horizons in a royal carafe.",
                 "requiredEffect": "hearth_tonic",
                 "minLayers": 4,
                 "minLayerCrispness": 0.84,
@@ -434,17 +866,71 @@ COMMISSION_TEMPLATES: dict[str, dict[str, list[dict[str, Any]]]] = {
                 "minPeakTempC": 70.0,
                 "rewardCrowns": 200,
             },
+            {
+                "title": "Glacier-Alum Four-Tier Salve",
+                "description": "Counter endothermic glacial alum cooling with gentle bellows heat past 48 C across four unclouded restorative layers.",
+                "requiredEffect": "burn_salve",
+                "minLayers": 4,
+                "minLayerCrispness": 0.85,
+                "minPurity": 0.88,
+                "targetPh": [5.6, 8.4],
+                "minPeakTempC": 48.0,
+                "rewardCrowns": 196,
+            },
+            {
+                "title": "Polar Aurora Quad-Strata Elixir",
+                "description": "Warm four iridescent lotus-to-starlight horizons above 50 C inside a teardrop flask with near-zero shear folding.",
+                "requiredEffect": "galaxy_elixir",
+                "minLayers": 4,
+                "minLayerCrispness": 0.86,
+                "minPurity": 0.89,
+                "targetPh": [6.2, 8.8],
+                "minPeakTempC": 50.0,
+                "rewardCrowns": 212,
+            },
         ],
         "starfall_conclave": [
             {
                 "title": "Zenith Nebula Collector Crown",
-                "description": "Achieve four luminous strata of auric mica and starlight oil at peak purity for Guild exhibition.",
+                "description": "Achieve four luminous strata of lotus nectar, lichen dew, auric mica, and starlight oil at peak purity for Guild exhibition.",
                 "requiredEffect": "galaxy_elixir",
                 "minLayers": 4,
                 "minLayerCrispness": 0.86,
                 "minPurity": 0.90,
                 "targetPh": [6.4, 9.0],
                 "rewardCrowns": 215,
+            },
+            {
+                "title": "Comet-Crucible Astral Fire Ward",
+                "description": "Hold cinnabar sulfur ash, bismuth vitriol, chalk lime, and saffron pollen through 66 C peak heat with four sharp boundaries.",
+                "requiredEffect": "fire_ward",
+                "minLayers": 4,
+                "minLayerCrispness": 0.84,
+                "minPurity": 0.88,
+                "targetPh": [4.5, 7.8],
+                "minPeakTempC": 66.0,
+                "rewardCrowns": 206,
+            },
+            {
+                "title": "Orrery Sovereign pH Calibrator",
+                "description": "Lock four dense mineral and botanical layers inside a razor-tight neutral pH corridor for glass-loupe scrutiny.",
+                "requiredEffect": "neutralizing_salve",
+                "minLayers": 4,
+                "minLayerCrispness": 0.85,
+                "minPurity": 0.89,
+                "targetPh": [6.5, 7.5],
+                "rewardCrowns": 204,
+            },
+            {
+                "title": "Starlight-Tempered Hearth Quintessence",
+                "description": "Fuse amber resin, saffron pollen, rose madder, and starlight oil above 68 C without dulling mica luminescence.",
+                "requiredEffect": "hearth_tonic",
+                "minLayers": 4,
+                "minLayerCrispness": 0.85,
+                "minPurity": 0.89,
+                "targetPh": [5.5, 8.1],
+                "minPeakTempC": 68.0,
+                "rewardCrowns": 208,
             },
         ],
     },
@@ -461,17 +947,86 @@ def get_utc_iso_year_week(now: datetime | None = None) -> str:
     return f"{iso_cal.year}-W{iso_cal.week:02d}"
 
 
+_WEEK_REGIME_CACHE: dict[str, str] = {}
+
+
 def seed_for_iso_week(iso_year_week: str) -> int:
     digest = hashlib.sha256(iso_year_week.encode("utf-8")).digest()
     return int.from_bytes(digest[:8], "big")
+
+
+def parse_iso_year_week(iso_year_week: str) -> date | None:
+    """Parse ``YYYY-Www`` into its ISO Monday date, or ``None`` if non-ISO."""
+    parts = iso_year_week.split("-W")
+    if len(parts) != 2:
+        return None
+    try:
+        return date.fromisocalendar(int(parts[0]), int(parts[1]), 1)
+    except ValueError:
+        return None
+
+
+def regime_for_iso_week(iso_year_week: str) -> str:
+    """Deterministically pick the market regime for an ISO year-week string."""
+    cached = _WEEK_REGIME_CACHE.get(iso_year_week)
+    if cached is not None:
+        return cached
+    rng = random.Random(seed_for_iso_week(iso_year_week))
+    regime = MARKET_REGIMES[rng.randrange(len(MARKET_REGIMES))]
+    _WEEK_REGIME_CACHE[iso_year_week] = regime
+    return regime
+
+
+def compute_regime_occurrence(iso_year_week: str, target_regime: str) -> int | None:
+    """Count zero-based prior occurrences of ``target_regime`` since ``ANCHOR_ISO_MONDAY``."""
+    target_monday = parse_iso_year_week(iso_year_week)
+    if target_monday is None or target_monday < ANCHOR_ISO_MONDAY:
+        return None
+
+    occurrences = 0
+    cursor = ANCHOR_ISO_MONDAY
+    while cursor <= target_monday:
+        iso_cal = cursor.isocalendar()
+        week_str = f"{iso_cal.year}-W{iso_cal.week:02d}"
+        if regime_for_iso_week(week_str) == target_regime:
+            if cursor == target_monday:
+                return occurrences
+            occurrences += 1
+        cursor += timedelta(days=7)
+    return None
+
+
+def pick_non_repeating_index(salt: str, pool_len: int, occ_index: int) -> int:
+    """Select an index in ``0..pool_len-1`` from shuffled non-repeating cycles."""
+    if pool_len <= 1:
+        return 0
+    cycle = occ_index // pool_len
+    pos = occ_index % pool_len
+    prev_last: int | None = None
+    for c in range(cycle + 1):
+        order = list(range(pool_len))
+        cycle_rng = random.Random(seed_for_iso_week(f"{salt}::cycle-{c}"))
+        cycle_rng.shuffle(order)
+        if prev_last is not None and order[0] == prev_last:
+            swap_idx = 1 + cycle_rng.randrange(pool_len - 1)
+            order[0], order[swap_idx] = order[swap_idx], order[0]
+        if c == cycle:
+            return order[pos]
+        prev_last = order[-1]
+    return 0
 
 
 def build_festival_payload(iso_year_week: str) -> dict[str, Any]:
     rng = random.Random(seed_for_iso_week(iso_year_week))
 
     regime = MARKET_REGIMES[rng.randrange(len(MARKET_REGIMES))]
+    occ_index = compute_regime_occurrence(iso_year_week, regime)
     festival_pool = REGIME_FESTIVALS[regime]
-    festival_name, lore_note = festival_pool[rng.randrange(len(festival_pool))]
+    if occ_index is not None:
+        fest_idx = pick_non_repeating_index(f"{regime}::festival", len(festival_pool), occ_index)
+    else:
+        fest_idx = rng.randrange(len(festival_pool))
+    festival_name, lore_note = festival_pool[fest_idx]
 
     reagent_modifiers: dict[str, float] = {}
     base_elasticities = REGIME_ELASTICITY_BASES[regime]
@@ -490,7 +1045,11 @@ def build_festival_payload(iso_year_week: str) -> dict[str, Any]:
     commissions: list[dict[str, Any]] = []
     for tier in ("apprentice", "journeyman", "grandmaster"):
         pool = COMMISSION_TEMPLATES[tier][regime]
-        chosen = dict(pool[rng.randrange(len(pool))])
+        if occ_index is not None:
+            comm_idx = pick_non_repeating_index(f"{regime}::{tier}", len(pool), occ_index)
+        else:
+            comm_idx = rng.randrange(len(pool))
+        chosen = dict(pool[comm_idx])
         commission: dict[str, Any] = {
             "id": f"comm-{iso_year_week.lower()}-{tier}",
             "tier": tier,
@@ -530,6 +1089,10 @@ def validate_payload(payload: dict[str, Any]) -> None:
         raise ValueError("schemaVersion must equal 1")
     if payload.get("regime") not in MARKET_REGIMES:
         raise ValueError(f"Invalid regime: {payload.get('regime')}")
+    if not isinstance(payload.get("festivalName"), str) or not payload["festivalName"].strip():
+        raise ValueError("festivalName must be a non-empty string")
+    if not isinstance(payload.get("loreNote"), str) or not payload["loreNote"].strip():
+        raise ValueError("loreNote must be a non-empty string")
 
     reagents = payload.get("reagentElasticityModifiers", {})
     if tuple(reagents.keys()) != CANONICAL_REAGENT_ORDER:
@@ -551,9 +1114,25 @@ def validate_payload(payload: dict[str, Any]) -> None:
     expected_tiers = ["apprentice", "journeyman", "grandmaster"]
     if [c.get("tier") for c in commissions] != expected_tiers:
         raise ValueError("commissions must match [apprentice, journeyman, grandmaster] tiers")
+    if len({c.get("title") for c in commissions}) != 3 or len({c.get("id") for c in commissions}) != 3:
+        raise ValueError("commissions must have 3 unique titles and IDs")
     for c in commissions:
         if c.get("requiredEffect") not in POTION_EFFECTS:
             raise ValueError(f"Invalid requiredEffect: {c.get('requiredEffect')}")
+        if not isinstance(c.get("minLayers"), int) or c["minLayers"] < 1:
+            raise ValueError(f"Invalid minLayers: {c.get('minLayers')}")
+        if not (0 < float(c.get("minLayerCrispness", 0)) <= 1.0):
+            raise ValueError(f"Invalid minLayerCrispness: {c.get('minLayerCrispness')}")
+        if not (0 < float(c.get("minPurity", 0)) <= 1.0):
+            raise ValueError(f"Invalid minPurity: {c.get('minPurity')}")
+        if not isinstance(c.get("rewardCrowns"), int) or c["rewardCrowns"] <= 0:
+            raise ValueError(f"Invalid rewardCrowns: {c.get('rewardCrowns')}")
+        if "targetPh" in c:
+            ph_pair = c["targetPh"]
+            if not isinstance(ph_pair, list) or len(ph_pair) != 2 or not (1.5 <= ph_pair[0] < ph_pair[1] <= 12.5):
+                raise ValueError(f"Invalid targetPh: {ph_pair}")
+        if "minPeakTempC" in c and not (15.0 <= float(c["minPeakTempC"]) <= 98.0):
+            raise ValueError(f"Invalid minPeakTempC: {c['minPeakTempC']}")
 
 
 def main() -> Path:
