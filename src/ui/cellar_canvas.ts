@@ -421,17 +421,21 @@ export class CellarCanvasView {
     ctx.arc(cx, cy + 2 * scale, r * 0.52, 0, Math.PI * 2);
     ctx.fill();
 
-    // Apparatus label
+    // Apparatus label (flip above vessel when node sits near bottom edge)
+    const labelAbove = node.y > 0.7;
+    const labelY = labelAbove ? cy - r - 24 * scale : cy + r + 10 * scale;
+    const subLabelY = labelAbove ? cy - r - 12 * scale : cy + r + 23 * scale;
+
     ctx.fillStyle = '#f2e4c7';
     ctx.font = `bold ${Math.round(11 * scale)}px Palatino Linotype, Georgia, serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(APPARATUS_SHORT[node.type], cx, cy + r + 10 * scale);
+    ctx.fillText(APPARATUS_SHORT[node.type], cx, labelY);
 
     if (reagentSpec) {
       ctx.fillStyle = '#d4b888';
       ctx.font = `${Math.round(9.5 * scale)}px Palatino Linotype, Georgia, serif`;
-      ctx.fillText(reagentSpec.name.split(' ')[0], cx, cy + r + 23 * scale);
+      ctx.fillText(reagentSpec.name.split(' ')[0], cx, subLabelY);
     }
   }
 }

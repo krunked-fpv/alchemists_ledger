@@ -4,6 +4,7 @@ import {
   CauldronSimulator,
   getPhIndicatorRgb,
   evaluateCommission,
+  generateProceduralCommissions,
   type CauldronFluidState,
   type CraftedPotion,
   type FestivalCommissionSpec,
@@ -68,6 +69,7 @@ import {
 } from './bottles';
 import { BrassScaleView } from './scale_view';
 import { CellarCanvasView } from './cellar_canvas';
+import { CelebrationDirector } from './celebration_fx';
 
 type StationId = 'prep' | 'cauldron' | 'decant' | 'shopfront' | 'cellar';
 type DecantPhase = 'idle' | 'poured' | 'corked' | 'wax_poured' | 'stamped';
@@ -160,6 +162,7 @@ export class ApothecaryStudioApp {
   private renderer: ApothecaryRenderer | null = null;
   private scaleView: BrassScaleView | null = null;
   private cellarCanvasView: CellarCanvasView | null = null;
+  private celebrationDirector!: CelebrationDirector;
 
   private activeStation: StationId = 'prep';
   private selectedReagentId: ReagentId = 'amber_honey_resin';
@@ -171,6 +174,7 @@ export class ApothecaryStudioApp {
 
   private selectedShelfIndex = 0;
   private envoySequence = 1;
+  private recentEnvoyNames: string[] = [];
   private activeEnvoy!: EnvoyOffer;
   private envoyReactionLine = '';
   private marketSnapshot!: MarketSnapshot;
@@ -191,6 +195,7 @@ export class ApothecaryStudioApp {
   private lastSyncedCauldronTemp = 22;
   private lastSyncedCauldronOmega = 0;
   private statusWhisperTimer: number | null = null;
+  private readonly microJuiceTimers = new Set<number>();
 
   private rafId: number | null = null;
   private heartbeatId: number | null = null;
@@ -218,6 +223,7 @@ export class ApothecaryStudioApp {
   private installWrapEl!: HTMLElement;
   private installBtn!: HTMLButtonElement;
   private whisperEl!: HTMLElement;
+  private trapdoorVeilEl!: HTMLElement;
 
   // Station I DOM
   private jarButtons = new Map<ReagentId, HTMLButtonElement>();
@@ -235,12 +241,14 @@ export class ApothecaryStudioApp {
   private ladleArmEl!: HTMLElement;
   private phTilesEl!: HTMLElement;
   private emberBedEl!: HTMLElement;
+  private emberSparksHostEl!: HTMLElement;
   private cauldronReadoutEl!: HTMLElement;
   private gentleStirBtn!: HTMLButtonElement;
   private whipMarblingBtn!: HTMLButtonElement;
   private bellowsBtn!: HTMLButtonElement;
 
   // Station III DOM
+  private decantCanvasFrameEl!: HTMLElement;
   private decantCanvas!: HTMLCanvasElement;
   private vesselButtons = new Map<PotionVessel, HTMLButtonElement>();
   private waxButtons = new Map<WaxColor, HTMLButtonElement>();
@@ -284,6 +292,7 @@ export class ApothecaryStudioApp {
     this.audioEngine.setMasterVolume(this.saveState.audioVolume);
     this.audioEngine.setWeatherRegime(slot.regime);
 
+    this.seedEnvoySequenceForSlot(slot);
     this.refreshMarketAndEnvoy(false);
     this.buildWorkspaceDom();
     this.initRenderers();
@@ -349,6 +358,51 @@ export class ApothecaryStudioApp {
     }
   }
 
+  private seedEnvoySequenceForSlot(slot: HouseholdSlotState): void {
+    this.envoySequence = slot.ledgerEntries.length + slot.shelfPotions.length + slot.day * 7;
+    this.recentEnvoyNames = [];
+  }
+
+  private recordRecentEnvoyName(name: string | undefined): void {
+    if (!name) return;
+    if (this.recentEnvoyNames[this.recentEnvoyNames.length - 1] !== name) {
+      this.recentEnvoyNames.push(name);
+      if (this.recentEnvoyNames.length > 12) {
+        this.recentEnvoyNames.shift();
+      }
+    }
+  }
+
+  private advanceEnvoy(clearWeights = true): void {
+    this.recordRecentEnvoyName(this.activeEnvoy?.name);
+    this.envoySequence += 1;
+    this.refreshMarketAndEnvoy(clearWeights);
+  }
+
+  private getActiveCommissions(slot: HouseholdSlotState): FestivalCommissionSpec[] {
+    const completed = new Set(slot.completedCommissionIds);
+    const unfulfilledFestival = (this.festival?.commissions ?? []).filter(
+      (c) => !completed.has(c.id)
+    );
+    const procedural = generateProceduralCommissions({
+      regime: slot.regime,
+      day: slot.day,
+      completedIds: slot.completedCommissionIds,
+      seed: `${slot.dateSeed}::s${slot.slotId}`,
+      count: 3,
+    });
+
+    const active: FestivalCommissionSpec[] = [];
+    const seenIds = new Set<string>();
+    for (const comm of [...unfulfilledFestival, ...procedural]) {
+      if (completed.has(comm.id) || seenIds.has(comm.id)) continue;
+      seenIds.add(comm.id);
+      active.push(comm);
+      if (active.length >= 3) break;
+    }
+    return active;
+  }
+
   private refreshMarketAndEnvoy(clearWeights = true): void {
     const slot = this.getActiveSlot();
     this.marketSnapshot = computeMarketSnapshot(
@@ -365,7 +419,8 @@ export class ApothecaryStudioApp {
     this.activeEnvoy = generateEnvoyForPotion(
       selectedPotion,
       this.marketSnapshot,
-      `${slot.dateSeed}::d${slot.day}::s${slot.slotId}::e${this.envoySequence}`
+      `${slot.dateSeed}::d${slot.day}::s${slot.slotId}::e${this.envoySequence}`,
+      this.recentEnvoyNames
     );
     if (clearWeights) {
       this.brassScale.clearWeights();
@@ -521,6 +576,10 @@ export class ApothecaryStudioApp {
     const stage = document.createElement('main');
     stage.className = 'studio-stage';
 
+    this.trapdoorVeilEl = document.createElement('div');
+    this.trapdoorVeilEl.className = 'cellar-trapdoor-veil';
+    this.trapdoorVeilEl.setAttribute('aria-hidden', 'true');
+
     const prepPanel = this.buildPrepStation();
     const cauldronPanel = this.buildCauldronStation();
     const decantPanel = this.buildDecantStation();
@@ -533,8 +592,19 @@ export class ApothecaryStudioApp {
     this.stationPanels.set('shopfront', shopfrontPanel);
     this.stationPanels.set('cellar', cellarPanel);
 
-    stage.append(prepPanel, cauldronPanel, decantPanel, shopfrontPanel, cellarPanel);
+    stage.append(
+      this.trapdoorVeilEl,
+      prepPanel,
+      cauldronPanel,
+      decantPanel,
+      shopfrontPanel,
+      cellarPanel
+    );
     this.root.append(rail, this.vaultDrawerEl, this.whisperEl, stage);
+    this.celebrationDirector = new CelebrationDirector({
+      hostEl: this.root,
+      getRenderer: () => this.renderer,
+    });
   }
 
   private buildVaultDrawer(): void {
@@ -701,6 +771,10 @@ export class ApothecaryStudioApp {
     this.emberBedEl = document.createElement('div');
     this.emberBedEl.className = 'hearth-ember-bed';
     this.emberBedEl.innerHTML = `<span class="ember-glow"></span><span class="ember-caption">Hearth Coals</span>`;
+    this.emberSparksHostEl = document.createElement('span');
+    this.emberSparksHostEl.className = 'ember-sparks-host';
+    this.emberSparksHostEl.setAttribute('aria-hidden', 'true');
+    this.emberBedEl.appendChild(this.emberSparksHostEl);
 
     cauldronCol.append(canvasFrame, this.emberBedEl);
 
@@ -790,6 +864,7 @@ export class ApothecaryStudioApp {
 
     const canvasCol = document.createElement('div');
     canvasCol.className = 'decant-canvas-col';
+    this.decantCanvasFrameEl = canvasCol;
 
     this.decantCanvas = document.createElement('canvas');
     this.decantCanvas.className = 'decant-canvas';
@@ -1206,7 +1281,14 @@ export class ApothecaryStudioApp {
     removeBtn.textContent = 'Remove Selected Vessel';
     removeBtn.addEventListener('click', () => this.handleRemoveSelectedCellarNode());
 
-    pipeActions.append(connectBtn, feedBtn, removeBtn);
+    const clearPipesBtn = document.createElement('button');
+    clearPipesBtn.type = 'button';
+    clearPipesBtn.className = 'brass-clasp';
+    clearPipesBtn.dataset.testid = 'clear-cellar-pipes-btn';
+    clearPipesBtn.textContent = 'Clear Tubes';
+    clearPipesBtn.addEventListener('click', () => this.handleClearCellarPipes());
+
+    pipeActions.append(connectBtn, feedBtn, removeBtn, clearPipesBtn);
     wireGroup.append(wireTitle, selectorsRow, pipeActions);
 
     this.cellarInventoryEl = document.createElement('div');
@@ -1577,6 +1659,108 @@ export class ApothecaryStudioApp {
     globalAudioBus.emit({ type: 'ladle_swirl', angularSpeed, viscosity });
   }
 
+  private prefersReducedMotion(): boolean {
+    try {
+      return Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches);
+    } catch {
+      return false;
+    }
+  }
+
+  private scheduleMicroJuice(fn: () => void, delayMs: number): void {
+    const id = window.setTimeout(() => {
+      this.microJuiceTimers.delete(id);
+      if (!this.disposed) {
+        fn();
+      }
+    }, delayMs);
+    this.microJuiceTimers.add(id);
+  }
+
+  private triggerPulseClass(
+    el: HTMLElement | null | undefined,
+    className: string,
+    durationMs: number
+  ): void {
+    if (!el || this.disposed) return;
+    el.classList.remove(className);
+    void el.offsetWidth;
+    el.classList.add(className);
+    this.scheduleMicroJuice(() => {
+      el.classList.remove(className);
+    }, durationMs);
+  }
+
+  private spawnMortarSparks(colorCss: string): void {
+    this.triggerPulseClass(this.mortarEl, 'is-ritual-pulse', 420);
+    if (this.prefersReducedMotion()) return;
+
+    const burst = document.createElement('span');
+    burst.className = 'ritual-spark-burst';
+    burst.setAttribute('aria-hidden', 'true');
+    const offsets: ReadonlyArray<readonly [number, number]> = [
+      [-26, -18],
+      [26, -20],
+      [-32, 10],
+      [30, 12],
+      [0, -28],
+      [14, 24],
+    ];
+    for (let i = 0; i < offsets.length; i++) {
+      const spark = document.createElement('span');
+      spark.className = 'ritual-crystal-spark';
+      spark.style.setProperty('--dx', `${offsets[i][0]}px`);
+      spark.style.setProperty('--dy', `${offsets[i][1]}px`);
+      spark.style.setProperty('--spark-color', colorCss);
+      spark.style.setProperty('--delay', `${(i % 3) * 28}ms`);
+      burst.appendChild(spark);
+    }
+    this.mortarEl.appendChild(burst);
+    this.scheduleMicroJuice(() => burst.remove(), 460);
+  }
+
+  private triggerKnifeSlash(colorCss: string): void {
+    this.knifeBoardEl.style.setProperty('--slash-tint', colorCss);
+    this.triggerPulseClass(this.knifeBoardEl, 'is-ritual-slash', 420);
+  }
+
+  private spawnPipetteBurst(colorCss: string): void {
+    this.pipetteEl.style.setProperty('--drop-tint', colorCss);
+    this.triggerPulseClass(this.pipetteEl, 'is-ritual-drop', 440);
+    if (this.prefersReducedMotion()) return;
+
+    const burst = document.createElement('span');
+    burst.className = 'ritual-drop-burst';
+    burst.setAttribute('aria-hidden', 'true');
+    const ring = document.createElement('span');
+    ring.className = 'ritual-drop-ring';
+    const droplet = document.createElement('span');
+    droplet.className = 'ritual-drop-bead';
+    burst.append(ring, droplet);
+    this.pipetteEl.appendChild(burst);
+    this.scheduleMicroJuice(() => burst.remove(), 460);
+  }
+
+  private spawnBellowsSparks(): void {
+    this.triggerPulseClass(this.emberBedEl, 'is-ember-flaring', 460);
+    if (this.prefersReducedMotion() || !this.emberSparksHostEl) return;
+
+    const sparkCount = 7;
+    for (let i = 0; i < sparkCount; i++) {
+      const spark = document.createElement('span');
+      spark.className = 'ember-spark-mote';
+      const xPct = 18 + (i / (sparkCount - 1)) * 64;
+      const dx = ((i % 2 === 0 ? 1 : -1) * (6 + (i % 3) * 5)).toFixed(1);
+      const riseY = -(28 + (i % 3) * 14);
+      spark.style.left = `${xPct.toFixed(1)}%`;
+      spark.style.setProperty('--dx', `${dx}px`);
+      spark.style.setProperty('--rise-y', `${riseY}px`);
+      spark.style.setProperty('--delay', `${i * 35}ms`);
+      this.emberSparksHostEl.appendChild(spark);
+      this.scheduleMicroJuice(() => spark.remove(), 680);
+    }
+  }
+
   private performPrepAddition(prepForm: PrepForm, speed: number): void {
     const slot = this.getActiveSlot();
     const spec = REAGENT_CATALOG[this.selectedReagentId];
@@ -1590,17 +1774,21 @@ export class ApothecaryStudioApp {
     }
 
     const state = this.cauldronSim.addReagent(this.selectedReagentId, prepForm, 25);
+    const reagentCss = rgbTupleToCss(spec.baseColorRgb);
 
     if (prepForm === 'ground_crystal') {
       globalAudioBus.emit({ type: 'mortar_grind', hardness: spec.hardness, speed });
+      this.spawnMortarSparks(reagentCss);
     } else if (prepForm === 'sliced_botanical') {
       globalAudioBus.emit({
         type: 'herb_slice',
         wetness: clamp(1 - spec.hardness, 0.12, 0.95),
       });
+      this.triggerKnifeSlash(reagentCss);
     } else if (prepForm === 'pipette_drops') {
       globalAudioBus.emit({ type: 'pipette_drop', viscosity: spec.baseViscosity });
       this.renderer?.triggerDropletRipple(0.5, 0.5);
+      this.spawnPipetteBurst(reagentCss);
     }
 
     this.pushCauldronToRenderer(state);
@@ -1622,6 +1810,11 @@ export class ApothecaryStudioApp {
       pitchOffset: kind === 'cellar_quintessence' ? 4 : -3,
     });
     this.renderer?.triggerDropletRipple(0.5, 0.5);
+    this.triggerPulseClass(
+      kind === 'cellar_quintessence' ? this.infuseQuintBtn : this.addSaltBtn,
+      'is-ceremony-beat',
+      380
+    );
     this.pushCauldronToRenderer(state);
     this.syncPrepUi();
     this.syncCauldronUi();
@@ -1662,8 +1855,8 @@ export class ApothecaryStudioApp {
         viscosity: next.meanViscosity,
       });
     }
-    this.bellowsBtn.classList.add('is-pumping');
-    window.setTimeout(() => this.bellowsBtn.classList.remove('is-pumping'), 220);
+    this.triggerPulseClass(this.bellowsBtn, 'is-pumping', 240);
+    this.spawnBellowsSparks();
     this.pushCauldronToRenderer(next);
     this.syncCauldronUi();
   }
@@ -1705,6 +1898,8 @@ export class ApothecaryStudioApp {
     this.decantPhase = 'poured';
     this.decantPourVisual = Math.max(this.decantPourVisual, 0.25);
     globalAudioBus.emit({ type: 'pipette_drop', viscosity: state.meanViscosity, pitchOffset: -5 });
+    this.triggerPulseClass(this.pourFunnelBtn, 'is-ceremony-beat', 360);
+    this.triggerPulseClass(this.decantCanvasFrameEl, 'is-pour-beat', 420);
     this.syncDecantRenderer();
     this.syncDecantUi();
   }
@@ -1714,6 +1909,8 @@ export class ApothecaryStudioApp {
     this.decantPhase = 'corked';
     this.decantPourVisual = 1;
     globalAudioBus.emit({ type: 'cork_pop' });
+    this.triggerPulseClass(this.pressCorkBtn, 'is-cork-pop', 420);
+    this.triggerPulseClass(this.decantCanvasFrameEl, 'is-cork-beat', 420);
     this.syncDecantRenderer();
     this.syncDecantUi();
   }
@@ -1722,6 +1919,12 @@ export class ApothecaryStudioApp {
     if (this.decantPhase !== 'corked') return;
     this.decantPhase = 'wax_poured';
     globalAudioBus.emit({ type: 'wax_sizzle', phase: 'pour' });
+    this.decantCanvasFrameEl.style.setProperty(
+      '--wax-accent',
+      WAX_COLOR_HEX[this.selectedWaxColor]
+    );
+    this.triggerPulseClass(this.pourWaxBtn, 'is-wax-pouring', 480);
+    this.triggerPulseClass(this.decantCanvasFrameEl, 'is-wax-beat', 480);
     this.syncDecantRenderer();
     this.syncDecantUi();
   }
@@ -1730,6 +1933,13 @@ export class ApothecaryStudioApp {
     if (this.decantPhase !== 'wax_poured') return;
     this.decantPhase = 'stamped';
     globalAudioBus.emit({ type: 'wax_sizzle', phase: 'stamp' });
+    this.decantCanvasFrameEl.style.setProperty(
+      '--wax-accent',
+      WAX_COLOR_HEX[this.selectedWaxColor]
+    );
+    this.triggerPulseClass(this.stampSignetBtn, 'is-signet-impact', 520);
+    this.triggerPulseClass(this.decantCanvasFrameEl, 'is-signet-beat', 560);
+    this.celebrationDirector.playSealMasterwork(this.decantCanvas, this.selectedWaxColor);
     this.syncDecantRenderer();
     this.syncDecantUi();
   }
@@ -1761,8 +1971,7 @@ export class ApothecaryStudioApp {
     globalAudioBus.emit({ type: 'glass_clink', vessel: potion.vessel, momentum: 0.55 });
     this.pushCauldronToRenderer(this.cauldronSim.getState());
 
-    this.envoySequence += 1;
-    this.refreshMarketAndEnvoy(true);
+    this.advanceEnvoy(true);
     this.envoyReactionLine = `${this.activeEnvoy.name} inspects ${potion.name} on the sunlit shelf.`;
 
     this.syncAllUi();
@@ -1837,30 +2046,45 @@ export class ApothecaryStudioApp {
         kind: 'sale',
       });
 
-      // Evaluate Weekly Festival STEM Commissions
-      if (this.festival) {
-        for (const comm of this.festival.commissions) {
-          if (slot.completedCommissionIds.includes(comm.id)) continue;
-          const evalRes = evaluateCommission(potion, comm);
-          if (evalRes.satisfied) {
-            const reward = Math.round(comm.rewardCrowns * evalRes.bonusMultiplier);
-            slot.completedCommissionIds.push(comm.id);
-            slot.crowns = roundHalfCrown(slot.crowns + reward);
-            slot.reputation = Math.round((slot.reputation + 5) * 10) / 10;
-            this.appendLedgerEntry(slot, {
-              day: slot.day,
-              text: `Festival Commission: ${comm.title} (${comm.tier})`,
-              deltaCrowns: reward,
-              kind: 'commission',
-            });
-            this.showWhisper(`Commission Fulfilled: +${reward} Crowns!`);
-          }
+      this.celebrationDirector.playBargainStruck(
+        this.scaleHostEl,
+        this.crownTallyEl,
+        result.finalCrowns
+      );
+
+      // Evaluate Active Guild & Festival STEM Commissions
+      const activeCommissions = this.getActiveCommissions(slot);
+      const fulfilledList: Array<{ title: string; reward: number }> = [];
+      for (const comm of activeCommissions) {
+        if (slot.completedCommissionIds.includes(comm.id)) continue;
+        const evalRes = evaluateCommission(potion, comm);
+        if (evalRes.satisfied) {
+          const reward = Math.round(comm.rewardCrowns * evalRes.bonusMultiplier);
+          slot.completedCommissionIds.push(comm.id);
+          slot.crowns = roundHalfCrown(slot.crowns + reward);
+          slot.reputation = Math.round((slot.reputation + 5) * 10) / 10;
+          this.appendLedgerEntry(slot, {
+            day: slot.day,
+            text: `Guild Commission: ${comm.title} (${comm.tier})`,
+            deltaCrowns: reward,
+            kind: 'commission',
+          });
+          fulfilledList.push({ title: comm.title, reward });
         }
       }
 
+      if (fulfilledList.length > 0) {
+        const totalCommissionReward = fulfilledList.reduce((sum, item) => sum + item.reward, 0);
+        const bannerTitle =
+          fulfilledList.length === 1
+            ? fulfilledList[0].title
+            : `${fulfilledList[0].title} (+${fulfilledList.length - 1} more)`;
+        this.celebrationDirector.playCommissionFulfilled(bannerTitle, totalCommissionReward);
+        this.showWhisper(`Commission Fulfilled: +${formatCrowns(totalCommissionReward)} Crowns!`);
+      }
+
       globalAudioBus.emit({ type: 'quill_scratch', intensity: 0.9 });
-      this.envoySequence += 1;
-      this.refreshMarketAndEnvoy(true);
+      this.advanceEnvoy(true);
       this.syncAllUi();
       await this.persistSave();
       return;
@@ -1875,9 +2099,8 @@ export class ApothecaryStudioApp {
     }
 
     // Walked out: summon a new envoy
-    this.envoySequence += 1;
     const reaction = result.envoyReaction;
-    this.refreshMarketAndEnvoy(true);
+    this.advanceEnvoy(true);
     this.envoyReactionLine = reaction;
     globalAudioBus.emit({ type: 'glass_clink', vessel: potion.vessel, momentum: 0.25 });
     this.syncShopfrontUi();
@@ -1907,10 +2130,11 @@ export class ApothecaryStudioApp {
 
   private async handleNewDawnShift(): Promise<void> {
     const slot = this.getActiveSlot();
+    const prevRegime = slot.regime;
     const solvency = applyEndOfDaySolvency(slot.crowns, slot.mode, this.marketSnapshot);
     slot.crowns = solvency.nextCrowns;
     slot.day += 1;
-    slot.regime = pickDailyMarketRegime(slot.dateSeed, slot.day);
+    slot.regime = pickDailyMarketRegime(slot.dateSeed, slot.day, prevRegime);
 
     this.appendLedgerEntry(slot, {
       day: slot.day,
@@ -1921,8 +2145,7 @@ export class ApothecaryStudioApp {
       kind: 'overhead',
     });
 
-    this.envoySequence += 1;
-    this.refreshMarketAndEnvoy(true);
+    this.advanceEnvoy(true);
     this.renderer?.updateWeather(slot.regime);
     this.audioEngine.setWeatherRegime(slot.regime);
     globalAudioBus.emit({ type: 'weather_ambience', regime: slot.regime });
@@ -1930,6 +2153,11 @@ export class ApothecaryStudioApp {
 
     this.envoyReactionLine = `Dawn breaks under ${REGIME_META[slot.regime].label}.`;
     this.syncAllUi();
+    this.celebrationDirector.playDawnShift(
+      slot.regime,
+      slot.day,
+      REGIME_META[slot.regime].label
+    );
     this.showWhisper(`Day ${slot.day}: ${REGIME_META[slot.regime].label}`);
     await this.persistSave();
   }
@@ -1972,7 +2200,7 @@ export class ApothecaryStudioApp {
     this.renderer?.updateWeather(slot.regime);
     this.pushCauldronToRenderer(this.cauldronSim.getState());
 
-    this.envoySequence += 1;
+    this.seedEnvoySequenceForSlot(slot);
     this.selectedShelfIndex = 0;
     this.refreshMarketAndEnvoy(true);
     this.renderedLedgerKey = '';
@@ -2021,6 +2249,7 @@ export class ApothecaryStudioApp {
     this.audioEngine.setWeatherRegime(slot.regime);
     this.renderer?.updateWeather(slot.regime);
     this.pushCauldronToRenderer(this.cauldronSim.getState());
+    this.seedEnvoySequenceForSlot(slot);
     this.selectedShelfIndex = 0;
     this.refreshMarketAndEnvoy(true);
     this.renderedLedgerKey = '';
@@ -2053,7 +2282,7 @@ export class ApothecaryStudioApp {
     const col = idx % 4;
     const row = Math.floor(idx / 4) % 2;
     const nx = clamp(0.18 + col * 0.21 + (row * 0.06), 0.12, 0.88);
-    const ny = clamp(0.32 + row * 0.34 + ((idx % 2) * 0.08), 0.2, 0.82);
+    const ny = clamp(0.28 + row * 0.30 + ((idx % 2) * 0.08), 0.24, 0.68);
 
     const initialReagent =
       type === 'boiling_retort' ? this.cellarBotanicalId : undefined;
@@ -2161,7 +2390,50 @@ export class ApothecaryStudioApp {
     void this.persistSave();
   }
 
+  private handleClearCellarPipes(): void {
+    const graph = this.cellarEngine.getGraph();
+    if (graph.edges.length === 0) {
+      this.showWhisper('No borosilicate tubes to clear');
+      return;
+    }
+    this.cellarEngine.loadGraph({
+      ...graph,
+      edges: [],
+    });
+    this.connectSourceNodeId = null;
+    this.cellarCanvasView?.setSelection(this.selectedCellarNodeId, null);
+    globalAudioBus.emit({ type: 'glass_clink', vessel: 'carafe', momentum: 0.35 });
+    this.showWhisper('Cleared all cellar borosilicate tubes');
+    this.syncCellarUi();
+    void this.persistSave();
+  }
+
   switchStation(stationId: StationId): void {
+    const prevStation = this.activeStation;
+    if (prevStation === stationId) {
+      this.syncAllUi();
+      return;
+    }
+
+    const fromIndex = STATION_ORDER.indexOf(prevStation);
+    const toIndex = STATION_ORDER.indexOf(stationId);
+    const involvesCellar = stationId === 'cellar' || prevStation === 'cellar';
+    const transitionDir =
+      stationId === 'cellar'
+        ? 'cellar-down'
+        : prevStation === 'cellar'
+          ? 'cellar-up'
+          : toIndex > fromIndex
+            ? 'right'
+            : 'left';
+
+    globalAudioBus.emit({
+      type: 'station_transition',
+      fromIndex,
+      toIndex,
+      toCellar: involvesCellar,
+    });
+
     this.activeStation = stationId;
     for (const id of STATION_ORDER) {
       const isCurrent = id === stationId;
@@ -2169,8 +2441,21 @@ export class ApothecaryStudioApp {
       const panel = this.stationPanels.get(id);
       if (panel) {
         panel.hidden = !isCurrent;
+        if (isCurrent) {
+          panel.dataset.transitionDir = transitionDir;
+          this.triggerPulseClass(panel, 'is-station-entering', 440);
+        } else {
+          panel.classList.remove('is-station-entering');
+        }
       }
     }
+
+    if (involvesCellar && this.trapdoorVeilEl) {
+      this.trapdoorVeilEl.dataset.trapdoorDir =
+        stationId === 'cellar' ? 'descent' : 'ascent';
+      this.triggerPulseClass(this.trapdoorVeilEl, 'is-active', 480);
+    }
+
     this.syncAllUi();
   }
 
@@ -2229,6 +2514,7 @@ export class ApothecaryStudioApp {
 
   private syncPrepUi(): void {
     const slot = this.getActiveSlot();
+    const graph = this.cellarEngine.getGraph();
     for (const id of CANONICAL_REAGENT_ORDER) {
       const btn = this.jarButtons.get(id);
       if (!btn) continue;
@@ -2236,11 +2522,19 @@ export class ApothecaryStudioApp {
       const isSelected = id === this.selectedReagentId;
       btn.classList.toggle('is-selected', isSelected);
 
+      const jarQuint = graph.quintessences[id] ?? 0;
+      const jarSalt = graph.catalystSalts[id] ?? 0;
+      const hasDistillate = jarQuint > 0 || jarSalt > 0;
+      btn.classList.toggle('has-distillate', hasDistillate);
+
       // Specific gravity indicator dot maps [0.82 .. 1.55] -> top% [12% .. 82%]
       const rhoNorm = clamp((spec.specificGravity - 0.82) / (1.55 - 0.82), 0, 1);
       const dotTopPct = Math.round(14 + rhoNorm * 68);
       const stockLabel =
         slot.mode === 'apprentice' ? '∞' : `${slot.reagentStock[id] ?? 0}`;
+      const badgeHtml = hasDistillate
+        ? `<span class="jar-distillate-badge" title="Cellar distillate ready (${jarQuint} Quintessence, ${jarSalt} Catalyst Salt)">✦</span>`
+        : '';
 
       btn.innerHTML = `
         <span class="jar-glass" style="background:${rgbTupleToCss(spec.baseColorRgb, 0.88)}">
@@ -2250,6 +2544,7 @@ export class ApothecaryStudioApp {
           <span class="jar-name">${spec.name}</span>
           <span class="jar-sub">ρ ${spec.specificGravity.toFixed(2)} · Stock ${stockLabel}</span>
         </span>
+        ${badgeHtml}
       `;
     }
 
@@ -2268,7 +2563,6 @@ export class ApothecaryStudioApp {
       </div>
     `;
 
-    const graph = this.cellarEngine.getGraph();
     const quintQty = graph.quintessences[this.selectedReagentId] ?? 0;
     const saltQty = graph.catalystSalts[this.selectedReagentId] ?? 0;
     this.infuseQuintBtn.textContent = `Infuse Quintessence (${quintQty})`;
@@ -2420,8 +2714,7 @@ export class ApothecaryStudioApp {
         btn.appendChild(info);
         btn.addEventListener('click', () => {
           this.selectedShelfIndex = index;
-          this.envoySequence += 1;
-          this.refreshMarketAndEnvoy(true);
+          this.advanceEnvoy(true);
           this.envoyReactionLine = `${this.activeEnvoy.name} studies ${potion.name} across the counter.`;
           globalAudioBus.emit({ type: 'glass_clink', vessel: potion.vessel, momentum: 0.55 });
           this.syncShopfrontUi();
@@ -2474,34 +2767,28 @@ export class ApothecaryStudioApp {
       `;
     }
 
-    // 5. Festival Charter Banner
-    if (this.festival) {
-      const commsHtml = this.festival.commissions
-        .map((c) => {
-          const done = slot.completedCommissionIds.includes(c.id);
-          return `<li class="${done ? 'is-fulfilled' : ''}">
-            <span>${done ? '✓' : '○'} <strong>${c.title}</strong> (${c.tier}, +${c.rewardCrowns} Cr)</span>
-            <small>${c.description}</small>
-          </li>`;
-        })
-        .join('');
-      this.festivalBannerEl.innerHTML = `
-        <div class="festival-head">
-          <strong>${this.festival.festivalName}</strong>
-          <span>${this.festival.isoYearWeek}</span>
-        </div>
-        <p>${this.festival.loreNote}</p>
-        <ul class="festival-commissions-list">${commsHtml}</ul>
-      `;
-    } else {
-      this.festivalBannerEl.innerHTML = `
-        <div class="festival-head">
-          <strong>Guild Charter</strong>
-          <span>Day ${slot.day}</span>
-        </div>
-        <p>${REGIME_META[slot.regime].omen}</p>
-      `;
-    }
+    // 5. Infinite Non-Repeating Guild & Festival Commission Board
+    const activeCommissions = this.getActiveCommissions(slot);
+    const commsHtml = activeCommissions
+      .map(
+        (c) => `<li>
+          <span>○ <strong>${c.title}</strong> (${c.tier}, +${c.rewardCrowns} Cr)</span>
+          <small>${c.description}</small>
+        </li>`
+      )
+      .join('');
+    const charterTitle = this.festival ? this.festival.festivalName : 'Guild Charter Trials';
+    const charterBadge = this.festival ? this.festival.isoYearWeek : `Day ${slot.day}`;
+    const charterLore = this.festival ? this.festival.loreNote : REGIME_META[slot.regime].omen;
+    this.festivalBannerEl.innerHTML = `
+      <div class="festival-head">
+        <strong>${charterTitle}</strong>
+        <span>${charterBadge}</span>
+      </div>
+      <p>${charterLore}</p>
+      <div class="festival-seals-tally">✦ Fulfilled Seals: ${slot.completedCommissionIds.length}</div>
+      <ul class="festival-commissions-list">${commsHtml}</ul>
+    `;
 
     // 6. Wet-Ink Cotton-Rag Ledger (no HTML <table>)
     this.syncWetInkLedgerUi(slot);
@@ -2637,6 +2924,7 @@ export class ApothecaryStudioApp {
       // 4. Polyrhythmic Kinetic Cellar Engine
       const slot = this.getActiveSlot();
       let producedSomething = false;
+      let lastHarvestedReagentId: ReagentId | null = null;
       const cellarEvents = this.cellarEngine.tick(
         dt,
         slot.mode === 'grandmaster'
@@ -2657,7 +2945,22 @@ export class ApothecaryStudioApp {
           });
         }
         if (ev.producedItem) {
+          if (slot.mode === 'apprentice') {
+            const currentGraph = this.cellarEngine.getGraph();
+            const currentQty =
+              ev.producedItem.kind === 'cellar_quintessence'
+                ? (currentGraph.quintessences[ev.producedItem.reagentId] ?? 0)
+                : (currentGraph.catalystSalts[ev.producedItem.reagentId] ?? 0);
+            if (currentQty > 24) {
+              this.cellarEngine.consumeRefined(
+                ev.producedItem.kind,
+                ev.producedItem.reagentId
+              );
+              continue;
+            }
+          }
           producedSomething = true;
+          lastHarvestedReagentId = ev.producedItem.reagentId;
         }
       }
       if (this.activeStation === 'cellar') {
@@ -2669,6 +2972,19 @@ export class ApothecaryStudioApp {
         }
         if (this.activeStation === 'prep') {
           this.syncPrepUi();
+        }
+        if (this.activeStation === 'shopfront') {
+          this.syncShopfrontUi();
+        }
+        if (lastHarvestedReagentId) {
+          const harvestAnchor =
+            this.activeStation === 'cellar'
+              ? this.cellarCanvas
+              : this.stationTabs.get('cellar') ?? null;
+          this.celebrationDirector.playCellarHarvest(
+            REAGENT_CATALOG[lastHarvestedReagentId].name,
+            harvestAnchor
+          );
         }
         if (nowMs - this.cellarSaveCooldownMs > 1800) {
           this.cellarSaveCooldownMs = nowMs;
@@ -2707,6 +3023,11 @@ export class ApothecaryStudioApp {
     if (this.statusWhisperTimer !== null) {
       window.clearTimeout(this.statusWhisperTimer);
     }
+    for (const id of this.microJuiceTimers) {
+      window.clearTimeout(id);
+    }
+    this.microJuiceTimers.clear();
+    this.celebrationDirector?.dispose();
     this.renderer?.dispose();
     this.audioEngine.dispose();
   }
