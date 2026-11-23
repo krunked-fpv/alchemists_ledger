@@ -230,6 +230,7 @@ export class BrassScaleView {
       const nameSpan = document.createElement('span');
       nameSpan.className = 'scale-bottle-name';
       nameSpan.textContent = potion.name;
+      nameSpan.title = potion.name;
       miniWrap.appendChild(nameSpan);
       this.leftSlotEl.appendChild(miniWrap);
     } else {
