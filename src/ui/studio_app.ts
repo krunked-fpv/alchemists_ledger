@@ -488,7 +488,7 @@ export class ApothecaryStudioApp {
     this.waxVaultBtn.type = 'button';
     this.waxVaultBtn.className = 'brass-clasp wax-vault-toggle';
     this.waxVaultBtn.dataset.testid = 'wax-vault-btn';
-    this.waxVaultBtn.innerHTML = `<span aria-hidden="true">🜂</span><span>Wax Vault</span>`;
+    this.waxVaultBtn.innerHTML = `<span aria-hidden="true">❖</span><span>Wax Vault</span>`;
     this.waxVaultBtn.addEventListener('click', () => this.toggleVaultDrawer());
 
     const audioCluster = document.createElement('div');
@@ -2085,6 +2085,7 @@ export class ApothecaryStudioApp {
 
       globalAudioBus.emit({ type: 'quill_scratch', intensity: 0.9 });
       this.advanceEnvoy(true);
+      this.envoyReactionLine = `${this.activeEnvoy.name} steps up to inspect your shelf.`;
       this.syncAllUi();
       await this.persistSave();
       return;
@@ -2276,13 +2277,55 @@ export class ApothecaryStudioApp {
     }
   }
 
+  private pickCellarSpawnPosition(
+    nodes: ReadonlyArray<{ x: number; y: number }>
+  ): [number, number] {
+    const minSep = 0.17;
+    const candidates: Array<[number, number]> = [];
+    // Primary staggered 3x4 slots inside [0.14..0.86] x [0.22..0.68]
+    const rowCols: Array<{ x: readonly number[]; yBase: number; yZig: number }> = [
+      { x: [0.15, 0.37, 0.59, 0.81], yBase: 0.22, yZig: 0.04 },
+      { x: [0.22, 0.44, 0.66, 0.86], yBase: 0.44, yZig: 0.02 },
+      { x: [0.15, 0.37, 0.59, 0.81], yBase: 0.68, yZig: -0.03 },
+    ];
+    for (const row of rowCols) {
+      row.x.forEach((cx, colIdx) => {
+        const cy = clamp(row.yBase + (colIdx % 2) * row.yZig, 0.22, 0.68);
+        candidates.push([clamp(cx, 0.14, 0.86), Number(cy.toFixed(3))]);
+      });
+    }
+    // Fine staggered scan across [0.14..0.86] x [0.22..0.68]
+    for (let r = 0; r <= 6; r++) {
+      const cy = clamp(0.22 + r * 0.075, 0.22, 0.68);
+      const stagger = (r % 2) * 0.045;
+      for (let c = 0; c <= 8; c++) {
+        const cx = clamp(0.14 + stagger + c * 0.09, 0.14, 0.86);
+        candidates.push([Number(cx.toFixed(3)), Number(cy.toFixed(3))]);
+      }
+    }
+
+    let bestSlot: [number, number] = candidates[0] ?? [0.15, 0.22];
+    let bestMinDist = -1;
+    for (const [cx, cy] of candidates) {
+      let nearest = Infinity;
+      for (const node of nodes) {
+        const dist = Math.hypot(cx - node.x, cy - node.y);
+        if (dist < nearest) nearest = dist;
+      }
+      if (nearest >= minSep) {
+        return [cx, cy];
+      }
+      if (nearest > bestMinDist) {
+        bestMinDist = nearest;
+        bestSlot = [cx, cy];
+      }
+    }
+    return bestSlot;
+  }
+
   private handleAddCellarNode(type: CellarApparatusType): void {
     const graph = this.cellarEngine.getGraph();
-    const idx = graph.nodes.length;
-    const col = idx % 4;
-    const row = Math.floor(idx / 4) % 2;
-    const nx = clamp(0.18 + col * 0.21 + (row * 0.06), 0.12, 0.88);
-    const ny = clamp(0.28 + row * 0.30 + ((idx % 2) * 0.08), 0.24, 0.68);
+    const [nx, ny] = this.pickCellarSpawnPosition(graph.nodes);
 
     const initialReagent =
       type === 'boiling_retort' ? this.cellarBotanicalId : undefined;
@@ -2725,7 +2768,7 @@ export class ApothecaryStudioApp {
 
     // 2. Active Envoy Card
     const archetype = ENVOY_ARCHETYPES[this.activeEnvoy.archetype];
-    const patiencePips = '🜂 '.repeat(Math.max(0, this.activeEnvoy.patienceLeft)).trim() || 'Exhausted';
+    const patiencePips = '◆ '.repeat(Math.max(0, this.activeEnvoy.patienceLeft)).trim() || 'Exhausted';
     this.envoyCardEl.innerHTML = `
       <div class="envoy-header">
         <div>
